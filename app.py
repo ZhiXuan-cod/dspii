@@ -226,11 +226,31 @@ def login_page():
         transform: scale(0.98) !important;
     }
     </style>
+    
+    
+    /* ----- 新增卡片样式 ----- */
+    .form-card {
+        background: rgba(0, 0, 0, 0.7);
+        padding: 2rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+
+    /* 输入框白色背景，黑色文字 */
+    .form-card .stTextInput input {
+        background: white !important;
+        color: black !important;
+        border: 1px solid #ccc !important;
+    }
+
+    /* 输入框标签保持白色（在深色卡片上可见） */
+    .form-card .stTextInput label {
+        color: white !important;
+    }
     """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<div style='background-color: rgba(0, 0, 0, 0.70); padding: 2rem; border-radius: 20px;'>", unsafe_allow_html=True)
+    with col2: 
         
         st.markdown("<h2 style='color: white; text-align: center; margin-bottom: 1.5rem;'>Login / Register</h2>", unsafe_allow_html=True)
         
@@ -238,8 +258,8 @@ def login_page():
         
         with tab1:
             with st.form("login_form"):
-                email = st.text_input("Email")  # removed type and style
-                password = st.text_input("Password", type="password")  # keep type="password", remove style
+                email = st.text_input("Email")  
+                password = st.text_input("Password", type="password")  
                 submitted = st.form_submit_button("Login")
                 if submitted:
                     success, name = authenticate_user(email, password)
