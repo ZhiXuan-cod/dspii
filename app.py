@@ -3,11 +3,10 @@ import json
 import os
 import base64
 import pandas as pd
-import numpy as np
+
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, r2_score, mean_squared_error
 import pickle
-import time
 
 # Try importing TPOT, handle if not installed
 try:
