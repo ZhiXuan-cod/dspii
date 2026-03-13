@@ -183,7 +183,7 @@ def login_page():
     st.markdown("""
     <style>
     .login-panel {
-        background-color: rgba(0, 0, 0, 0.75);
+        background-color: rgba(0, 0, 0, 1);
         padding: 2rem 2rem 1.5rem 2rem;
         border-radius: 20px;
         box-shadow: 0 4px 20px rgba(0,0,0,0.5);
