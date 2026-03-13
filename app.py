@@ -182,15 +182,6 @@ def login_page():
     # 自定义样式：面板 + 选项卡文字颜色 + 独立返回按钮样式
     st.markdown("""
     <style>
-    .login-panel {
-        background-color: rgba(0, 0, 0, 0.70);  
-        padding: 2.5rem 2rem 2rem 2rem;       
-        border-radius: 20px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-        color: white;
-        width: 100%;
-        margin: 0 auto;
-    }
     .stTabs [data-baseweb="tab-list"] button {
         color: rgba(255,255,255,0.8);
         font-size: 1.1rem;
@@ -229,6 +220,7 @@ def login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown('<div class="login-panel">', unsafe_allow_html=True)
+        st.markdown("<style>.login-panel { background-color: rgba(0, 0, 0, 0.70); padding: 2.5rem 2rem 2rem 2rem; border-radius: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }</style>", unsafe_allow_html=True)
         
         st.markdown("<h2 style='color: white; text-align: center; margin-bottom: 1.5rem;'>Login / Register</h2>", unsafe_allow_html=True)
         
@@ -236,8 +228,8 @@ def login_page():
         
         with tab1:
             with st.form("login_form"):
-                email = st.text_input("Email")
-                password = st.text_input("Password", type="password")
+                email = st.text_input("Email", type="email", style="color: white;")
+                password = st.text_input("Password", type="password", style="color: white;")
                 submitted = st.form_submit_button("Login")
                 if submitted:
                     success, name = authenticate_user(email, password)
@@ -251,10 +243,10 @@ def login_page():
         
         with tab2:
             with st.form("register_form"):
-                name = st.text_input("Full Name")
-                email = st.text_input("Email")
-                password = st.text_input("Password", type="password")
-                confirm = st.text_input("Confirm Password", type="password")
+                name = st.text_input("Full Name", style="color: white;")
+                email = st.text_input("Email", type="email", style="color: white;")
+                password = st.text_input("Password", type="password", style="color: white;")
+                confirm = st.text_input("Confirm Password", type="password", style="color: white;")
                 submitted = st.form_submit_button("Register")
                 if submitted:
                     if password != confirm:
