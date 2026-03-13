@@ -2,6 +2,19 @@ import streamlit as st
 import json
 import os
 import base64
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, r2_score, mean_squared_error
+import pickle
+import time
+
+# Try importing TPOT, handle if not installed
+try:
+    from tpot import TPOTClassifier, TPOTRegressor
+    tpot_available = True
+except ImportError:
+    tpot_available = False
 
 # ---------- 页面配置 ----------
 st.set_page_config(
@@ -312,10 +325,114 @@ def dashboard_page():
         with col2:
             st.info("⚙️ AutoML (TPOT)")
         with col3:
-            st.info("🖼️ Image Support")
+            st.info("📐 Image Support")
         with col4:
             st.info("💬 NLP Chatbot")
 
+    # ----- 新增: 数据集上传与TPOT AutoML -----
+    st.markdown("---")
+    st.header("📤 Upload Dataset & Run AutoML (TPOT)")
+
+    # 检查TPOT是否可用
+    if not tpot_available:
+        st.error("TPOT is not installed. Please install it via `pip install tpot` to use AutoML.")
+        st.stop()
+
+    # 文件上传
+    uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
+    if uploaded_file is not None:
+        # 读取数据
+        df = pd.read_csv(uploaded_file)
+        st.subheader("Data Preview")
+        st.dataframe(df.head())
+
+        # 选择目标列
+        target_col = st.selectbox("Select the target column", df.columns.tolist())
+
+        # 选择问题类型 (自动检测或手动)
+        problem_type = st.radio("Problem type", ["Auto-detect", "Classification", "Regression"])
+        
+        # TPOT参数配置 (简化，使用较小的值以便快速演示)
+        st.subheader("TPOT Configuration")
+        generations = st.number_input("Generations", min_value=1, max_value=10, value=2, step=1)
+        population_size = st.number_input("Population Size", min_value=5, max_value=50, value=10, step=5)
+        cv = st.number_input("Cross-validation folds", min_value=2, max_value=10, value=5, step=1)
+        scoring = st.selectbox("Scoring metric", ["accuracy", "f1", "precision", "recall", "roc_auc"] if problem_type in ["Auto-detect", "Classification"] else ["r2", "neg_mean_squared_error", "neg_mean_absolute_error"])
+
+        # 运行按钮
+        if st.button("🚀 Run TPOT AutoML"):
+            with st.spinner("Running TPOT... This may take a while."):
+                # 准备数据
+                X = df.drop(columns=[target_col])
+                y = df[target_col]
+
+                # 处理缺失值（简单丢弃）
+                if X.isnull().sum().sum() > 0 or y.isnull().sum() > 0:
+                    st.warning("Missing values detected. Rows with missing values will be dropped.")
+                    combined = pd.concat([X, y], axis=1)
+                    combined = combined.dropna()
+                    X = combined.drop(columns=[target_col])
+                    y = combined[target_col]
+
+                # 自动检测问题类型
+                if problem_type == "Auto-detect":
+                    if y.dtype == 'object' or y.nunique() < 10:
+                        prob_type = "classification"
+                    else:
+                        prob_type = "regression"
+                else:
+                    prob_type = problem_type.lower()
+
+                # 分割数据集
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+                # 创建TPOT实例
+                if prob_type == "classification":
+                    tpot = TPOTClassifier(generations=generations, population_size=population_size,
+                                        cv=cv, scoring=scoring, verbosity=2, random_state=42, n_jobs=-1)
+                else:
+                    tpot = TPOTRegressor(generations=generations, population_size=population_size,
+                                        cv=cv, scoring=scoring, verbosity=2, random_state=42, n_jobs=-1)
+
+                # 拟合
+                tpot.fit(X_train, y_train)
+
+                # 评估
+                y_pred = tpot.predict(X_test)
+                st.subheader("📊 Evaluation Metrics")
+                if prob_type == "classification":
+                    acc = accuracy_score(y_test, y_pred)
+                    prec = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+                    rec = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+                    f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+                    st.write(f"**Accuracy:** {acc:.4f}")
+                    st.write(f"**Precision (weighted):** {prec:.4f}")
+                    st.write(f"**Recall (weighted):** {rec:.4f}")
+                    st.write(f"**F1-score (weighted):** {f1:.4f}")
+                else:
+                    r2 = r2_score(y_test, y_pred)
+                    mse = mean_squared_error(y_test, y_pred)
+                    st.write(f"**R² Score:** {r2:.4f}")
+                    st.write(f"**Mean Squared Error:** {mse:.4f}")
+
+                # 显示最佳管道
+                st.subheader("🏆 Best Pipeline")
+                st.code(tpot.fitted_pipeline_, language="python")
+
+                # 保存模型到session state以便下载
+                st.session_state['tpot_model'] = tpot
+                st.session_state['tpot_problem_type'] = prob_type
+
+            st.success("TPOT completed!")
+
+        # 下载模型按钮（如果模型存在）
+        if 'tpot_model' in st.session_state:
+            model_pickle = pickle.dumps(st.session_state['tpot_model'])
+            b64 = base64.b64encode(model_pickle).decode()
+            href = f'<a href="data:file/octet-stream;base64,{b64}" download="tpot_model.pkl">📥 Download Best Model (Pickle)</a>'
+            st.markdown(href, unsafe_allow_html=True)
+
+    # 登出按钮
     if st.button("Logout", type="primary"):
         st.session_state.logged_in = False
         st.session_state.user_name = ""
