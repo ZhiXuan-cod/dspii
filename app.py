@@ -189,7 +189,7 @@ def front_page():
 
 # ---------- 登录/注册页面 ----------
 def login_page():
-    set_bg_image_local("FrontPage.jpg")
+    set_bg_image_local("login.jpg")
     
     # Custom CSS: style tabs, inputs, and back button
     st.markdown("""
@@ -237,27 +237,7 @@ def login_page():
     .back-button-container button:active {
         transform: scale(0.98) !important;
     }
-    
-    
-    /* ----- 新增卡片样式 ----- */
-    .form-card {
-        background: rgba(0, 0, 0, 0.7);
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
 
-    /* 输入框白色背景，黑色文字 */
-    .form-card .stTextInput input {
-        background: white !important;
-        color: black !important;
-        border: 1px solid #ccc !important;
-    }
-
-    /* 输入框标签保持白色（在深色卡片上可见） */
-    .form-card .stTextInput label {
-        color: white !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
