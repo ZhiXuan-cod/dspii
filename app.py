@@ -204,13 +204,13 @@ def login_page():
     }
     /* Style text inputs and labels */
     .stTextInput input {
-        color: white !important;
+        color: black !important;
         background-color: rgba(255,255,255,0.1) !important;
         border: 1px solid rgba(255,255,255,0.3) !important;
         border-radius: 5px;
     }
     .stTextInput label {
-        color: white !important;
+        color: black !important;
     }
     /* Style the back button container */
     .back-button-container {
