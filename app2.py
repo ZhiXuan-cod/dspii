@@ -22,6 +22,8 @@ import pickle
 import warnings
 warnings.filterwarnings('ignore')
 
+from supabase import create_client, Client
+
 # ---------- TPOT availability ----------
 try:
     from tpot import TPOTClassifier, TPOTRegressor
@@ -36,6 +38,16 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
+# ---------- Supabase 客户端 ----------
+if "supabase" not in st.session_state:
+    try:
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["key"]
+        st.session_state.supabase = create_client(url, key)
+    except Exception as e:
+        st.error(f"Supabase 连接失败: {e}")
+        st.session_state.supabase = None
 
 # ---------- 背景图片（Base64嵌入）----------
 def get_base64_of_file(file_path):
@@ -71,37 +83,39 @@ def set_bg_image_local(image_path):
         """
         st.markdown(fallback_bg, unsafe_allow_html=True)
 
-# ---------- 用户数据存储 ----------
-USERS_FILE = "users.json"
-
-def load_users():
-    if not os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "w") as f:
-            json.dump({}, f)
-        return {}
-    try:
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        return {}
-
-def save_users(users):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=4)
-
+# ---------- 用户数据存储 (Supabase) ----------
 def register_user(email, password, name):
-    users = load_users()
-    if email in users:
-        return False, "Email already registered."
-    users[email] = {"name": name, "password": password}
-    save_users(users)
-    return True, "Registration successful. Please log in."
+    """注册新用户到 Supabase"""
+    if st.session_state.supabase is None:
+        return False, "Supabase 未连接，无法注册"
+    try:
+        # 检查邮箱是否已存在
+        response = st.session_state.supabase.table("users").select("*").eq("email", email).execute()
+        if len(response.data) > 0:
+            return False, "Email already registered."
+        # 插入新用户
+        data = {"email": email, "name": name, "password": password}
+        st.session_state.supabase.table("users").insert(data).execute()
+        return True, "Registration successful. Please log in."
+    except Exception as e:
+        return False, f"注册失败: {e}"
 
 def authenticate_user(email, password):
-    users = load_users()
-    if email in users and users[email]["password"] == password:
-        return True, users[email]["name"]
-    return False, None
+    """验证用户凭据"""
+    if st.session_state.supabase is None:
+        return False, None
+    try:
+        response = st.session_state.supabase.table("users").select("*").eq("email", email).execute()
+        if len(response.data) == 0:
+            return False, None
+        user = response.data[0]
+        if user["password"] == password:  # 建议生产环境使用密码哈希
+            return True, user["name"]
+        else:
+            return False, None
+    except Exception as e:
+        st.error(f"验证失败: {e}")
+        return False, None
 
 # ---------- 页面导航 ----------
 if "page" not in st.session_state:
@@ -304,7 +318,6 @@ def login_page():
         
         st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- 新增：额外的CSS样式（用于卡片、标题等）----------
 # ---------- 新增：额外的CSS样式（用于卡片、标题等）----------
 st.markdown("""
 <style>
