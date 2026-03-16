@@ -46,7 +46,7 @@ if "supabase" not in st.session_state:
         key = st.secrets["supabase"]["key"]
         st.session_state.supabase = create_client(url, key)
     except Exception as e:
-        st.error(f"Supabase 连接失败: {e}")
+        st.error(f"Supabase Fail Connect: {e}")
         st.session_state.supabase = None
 
 # ---------- 背景图片（Base64嵌入）----------
@@ -470,8 +470,12 @@ def eda_page():
         st.metric("Memory (MB)", f"{memory:.2f}")
 
     st.markdown("### 🔍 Data Types")
-    dtype_df = pd.DataFrame(df.dtypes.value_counts()).reset_index()
-    dtype_df.columns = ['Data Type', 'Count']
+    # FIX: Convert dtype objects to strings to avoid JSON serialization error
+    dtype_counts = df.dtypes.value_counts()
+    dtype_df = pd.DataFrame({
+        'Data Type': dtype_counts.index.astype(str),
+        'Count': dtype_counts.values
+    })
     fig = px.pie(dtype_df, values='Count', names='Data Type', title="Distribution of Data Types")
     st.plotly_chart(fig, use_container_width=True)
 
