@@ -6,3 +6,4 @@ tpot
 matplotlib
 seaborn
 plotly
+supabase
