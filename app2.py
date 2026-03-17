@@ -3,14 +3,12 @@ import os
 import base64
 import pandas as pd
 import numpy as np
-import time
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
@@ -20,7 +18,7 @@ from sklearn.metrics import (
 import warnings
 warnings.filterwarnings('ignore')
 
-from supabase import create_client, Client
+from supabase import create_client
 
 # ---------- TPOT availability ----------
 try:
@@ -554,7 +552,8 @@ def eda_page():
                 st.plotly_chart(fig, use_container_width=True)
 
 def training_page():
-    st.markdown('<h2 class="sub-header">🤖 Automated Model Training with TPOT</h2>', unsafe_allow_html=True)
+    # Icon changed from 🤖 to 📐
+    st.markdown('<h2 class="sub-header">📐 Automated Model Training with TPOT</h2>', unsafe_allow_html=True)
     if st.session_state.data is None or st.session_state.target_column is None:
         st.warning("⚠️ Please upload data and set target column first.")
         if st.button("Go to Data Upload"):
@@ -592,10 +591,8 @@ def training_page():
         max_time_mins = st.slider("Max Time (minutes)", 1, 60, 10)
         random_state = st.number_input("Random State", 0, 100, 42)
 
-    pre_cols = st.columns(3)
-    with pre_cols[0]:
-        handle_missing = st.selectbox("Handle Missing Values", ["auto", "impute", "drop"])
-    # Note: scaling and encoding are now handled by TPOT internally, so we ignore the other options.
+    # Removed unused columns; now a single selectbox for missing value handling
+    handle_missing = st.selectbox("Handle Missing Values", ["auto", "impute", "drop"])
 
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
         # Separate features and target
@@ -695,7 +692,7 @@ def evaluation_page():
     if not st.session_state.training_complete or st.session_state.model is None:
         st.warning("⚠️ Please train a model first from the 'Model Training' page.")
         if st.button("Go to Model Training"):
-            st.session_state.app_page = "🤖 Model Training"
+            st.session_state.app_page = "📐 Model Training"
             st.rerun()
         return
 
@@ -769,7 +766,7 @@ def prediction_page():
     if not st.session_state.training_complete or st.session_state.model is None:
         st.warning("⚠️ Please train a model first from the 'Model Training' page.")
         if st.button("Go to Model Training"):
-            st.session_state.app_page = "🤖 Model Training"
+            st.session_state.app_page = "📐 Model Training"
             st.rerun()
         return
 
@@ -865,7 +862,7 @@ def export_page():
     if not st.session_state.training_complete:
         st.warning("⚠️ Please train a model first to export results.")
         if st.button("Go to Model Training"):
-            st.session_state.app_page = "🤖 Model Training"
+            st.session_state.app_page = "📐 Model Training"
             st.rerun()
         return
 
@@ -935,10 +932,11 @@ def dashboard_page():
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/2103/2103655.png", width=100)
         st.markdown("### Navigation")
+        # Changed icon from 🤖 to 📐
         app_page_options = [
             "📁 Data Upload",
             "🔍 Exploratory Analysis",
-            "🤖 Model Training",
+            "📐 Model Training",
             "📈 Model Evaluation",
             "🔮 Make Predictions",
             "💾 Export Results"
@@ -977,7 +975,7 @@ def dashboard_page():
         upload_page()
     elif st.session_state.app_page == "🔍 Exploratory Analysis":
         eda_page()
-    elif st.session_state.app_page == "🤖 Model Training":
+    elif st.session_state.app_page == "📐 Model Training":
         training_page()
     elif st.session_state.app_page == "📈 Model Evaluation":
         evaluation_page()
