@@ -21,11 +21,9 @@ warnings.filterwarnings('ignore')
 from supabase import create_client
 
 # ---------- TPOT availability ----------
-try:
-    from tpot import TPOTClassifier, TPOTRegressor
-    tpot_available = True
-except ImportError:
-    tpot_available = False
+
+from tpot import TPOTClassifier, TPOTRegressor
+tpot_available = True
 
 # ---------- 页面配置 ----------
 st.set_page_config(
