@@ -22,11 +22,18 @@ from supabase import create_client
 
 # ---------- PyCaret availability ----------
 try:
-    from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, pull, save_model, load_model, plot_model
-    from pycaret.regression import setup as reg_setup, compare_models as reg_compare, predict_model as reg_predict, pull, save_model, load_model, plot_model
+    from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, pull as clf_pull, save_model, load_model, plot_model
+    from pycaret.regression import setup as reg_setup, compare_models as reg_compare, predict_model as reg_predict, pull as reg_pull
     pycaret_available = True
 except ImportError:
     pycaret_available = False
+
+# Try to import get_config (internal PyCaret helper) – may fail in some versions
+try:
+    from pycaret.internal.pycaret_experiment import get_config
+    get_config_available = True
+except ImportError:
+    get_config_available = False
 
 # ---------- 页面配置 ----------
 st.set_page_config(
@@ -313,7 +320,6 @@ def login_page():
     </style>
     """, unsafe_allow_html=True)
 
-    # 三列布局，中间列放置表单实现水平居中
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown('<div class="form-card">', unsafe_allow_html=True)
@@ -550,7 +556,32 @@ def eda_page():
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
 
-# ========== 修改点：training_page 函数（使用 PyCaret） ==========
+# ========== 模型名称映射 ==========
+CLASSIFICATION_MODEL_MAP = {
+    "Logistic Regression": "lr",
+    "Random Forest": "rf",
+    "XGBoost": "xgboost",
+    "LightGBM": "lightgbm",
+    "Decision Tree": "dt",
+    "Ridge": "ridge",
+    "KNN": "knn",
+    "SVM": "svm",
+    "Naive Bayes": "nb"
+}
+
+REGRESSION_MODEL_MAP = {
+    "Linear Regression": "lr",
+    "Random Forest": "rf",
+    "XGBoost": "xgboost",
+    "LightGBM": "lightgbm",
+    "Decision Tree": "dt",
+    "Ridge": "ridge",
+    "Lasso": "lasso",
+    "KNN": "knn",
+    "SVM": "svm"
+}
+
+# ========== 增强数据清洗的训练页面 ==========
 def training_page():
     st.markdown('<h2 class="sub-header">📐 Automated Model Training with PyCaret</h2>', unsafe_allow_html=True)
     if st.session_state.data is None or st.session_state.target_column is None:
@@ -579,48 +610,95 @@ def training_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # 初始化会话状态变量（用于绑定滑块/选项）
+    # 获取数值列和分类列（用于后续选项）
+    numerical_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+
+    # 初始化会话状态变量（可选，但保持整洁）
     if "train_folds" not in st.session_state:
         st.session_state.train_folds = 5
     if "train_metric" not in st.session_state:
         st.session_state.train_metric = "Accuracy" if problem_type == "Classification" else "R2"
-    if "train_models" not in st.session_state:
-        st.session_state.train_models = "All"
     if "train_tune" not in st.session_state:
         st.session_state.train_tune = False
     if "train_tune_iters" not in st.session_state:
         st.session_state.train_tune_iters = 10
 
-    # 参数配置区域
+    # 参数配置区域：使用两列布局，左侧预处理，右侧模型选择
     col1, col2 = st.columns(2)
 
     with col1:
-        # 预处理选项
-        st.markdown("#### 🧹 Preprocessing")
+        st.markdown("#### 🧹 Data Preprocessing")
+        
+        # 缺失值插补
+        numeric_imputation = st.selectbox(
+            "Numeric missing value imputation",
+            ["mean", "median", "mode", "zero"],
+            help="Strategy for imputing missing values in numeric columns"
+        )
+        categorical_imputation = st.selectbox(
+            "Categorical missing value imputation",
+            ["mode", "constant"],
+            help="Strategy for imputing missing values in categorical columns"
+        )
+        
+        # 异常值处理
+        remove_outliers = st.checkbox("Remove outliers", value=False,
+                                      help="Detect and remove outliers using PCA linear approximation")
+        outliers_threshold = None
+        if remove_outliers:
+            outliers_threshold = st.slider("Outliers threshold", 0.01, 0.5, 0.05, step=0.01,
+                                          help="Fraction of data to consider as outliers")
+        
+        # 特征分箱（仅对数值列）
+        bin_numeric_features = []
+        if numerical_cols:
+            bin_numeric_features = st.multiselect(
+                "Bin numeric features (convert to categorical)",
+                numerical_cols,
+                help="Selected numeric columns will be discretized into quantile bins"
+            )
+        
+        # 组合稀有类别
+        combine_rare_levels = st.checkbox("Combine rare levels in categorical features", value=False,
+                                          help="Group rare categories into a single 'rare' level")
+        rare_level_threshold = None
+        if combine_rare_levels and categorical_cols:
+            rare_level_threshold = st.slider("Rare level threshold", 0.01, 0.2, 0.05, step=0.01,
+                                             help="Minimum percentage to keep a category; below this threshold will be combined")
+        
+        # 特征选择
+        feature_selection = st.checkbox("Use feature selection", value=False,
+                                        help="Select a subset of features based on importance")
+        feature_selection_threshold = None
+        if feature_selection:
+            feature_selection_threshold = st.slider("Feature selection threshold", 0.5, 1.0, 0.8, step=0.05,
+                                                    help="Percentile of features to keep (based on importance)")
+        
+        # 其他常用预处理
         normalize = st.checkbox("Normalize numerical features", value=False)
         transformation = st.checkbox("Apply power transformation", value=False)
         remove_multicollinearity = st.checkbox("Remove multicollinearity", value=False)
         ignore_low_variance = st.checkbox("Ignore low variance features", value=False)
-        handle_unknown_categorical = st.checkbox("Handle unknown categorical levels", value=True)
         polynomial_features = st.checkbox("Create polynomial features", value=False)
-        truncate_low_importance = st.checkbox("Truncate low importance features", value=False)  # 对应 feature_importance 相关
-
+        
         # 数据拆分比例
         train_size = st.slider("Training data fraction", 0.6, 0.9, 0.8, step=0.05)
 
     with col2:
         st.markdown("#### 🎯 Model Selection")
-        # 模型选择：所有模型或部分模型
-        model_options = ["All", "LightGBM", "XGBoost", "Random Forest", "Decision Tree", "Logistic Regression", "Ridge", "Lasso", "KNN", "SVM", "Naive Bayes"]
-        if problem_type == "Regression":
-            model_options = ["All", "LightGBM", "XGBoost", "Random Forest", "Decision Tree", "Linear Regression", "Ridge", "Lasso", "KNN", "SVM"]
-        selected_models = st.multiselect("Include models (leave empty for all)", model_options, default=["All"])
-        if "All" in selected_models:
-            include_models = None  # PyCaret 默认使用所有模型
+        
+        # 模型选择
+        if problem_type == "Classification":
+            model_display_names = list(CLASSIFICATION_MODEL_MAP.keys())
         else:
-            # 将显示名称映射为 PyCaret 内部名称（需要根据实际模型名称调整）
-            # 简单起见，我们直接传递列表，PyCaret 的 compare_models 接受 include 参数
-            include_models = selected_models
+            model_display_names = list(REGRESSION_MODEL_MAP.keys())
+        selected_displays = st.multiselect("Include models (leave empty for all)", model_display_names, default=[])
+        if not selected_displays:
+            include_models = None
+        else:
+            model_map = CLASSIFICATION_MODEL_MAP if problem_type == "Classification" else REGRESSION_MODEL_MAP
+            include_models = [model_map[name] for name in selected_displays if name in model_map]
 
         # 交叉验证折数
         folds = st.slider("Cross-validation folds", 2, 10, value=st.session_state.train_folds, key="train_folds")
@@ -630,50 +708,69 @@ def training_page():
             metric_options = ["Accuracy", "AUC", "Recall", "Precision", "F1", "Kappa", "MCC"]
         else:
             metric_options = ["R2", "MAE", "MSE", "RMSE", "RMSLE", "MAPE"]
-        metric = st.selectbox("Optimization metric", metric_options, 
+        metric = st.selectbox("Optimization metric", metric_options,
                               index=metric_options.index(st.session_state.train_metric) if st.session_state.train_metric in metric_options else 0,
                               key="train_metric")
 
-        # 是否进行超参数调优
+        # 超参数调优
         tune = st.checkbox("Tune hyperparameters of the best model", value=st.session_state.train_tune, key="train_tune")
         if tune:
             tune_iters = st.slider("Tuning iterations", 5, 50, value=st.session_state.train_tune_iters, key="train_tune_iters")
 
-    # 警告：云环境资源有限
     st.warning("⚠️ Streamlit Cloud免费环境内存有限（约1GB）。若数据集较大或选择复杂模型，训练可能失败。建议使用较小的数据样本或简化预处理。")
 
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
         with st.spinner("🧠 PyCaret is setting up the environment and training models. This may take several minutes..."):
             try:
-                # 根据问题类型选择相应的 setup 函数
+                # 根据问题类型选择相应的 setup 和 compare 函数
                 if problem_type == "Classification":
                     setup_func = clf_setup
                     compare_func = clf_compare
+                    pull_func = clf_pull
                 else:
                     setup_func = reg_setup
                     compare_func = reg_compare
+                    pull_func = reg_pull
+
+                # 构建 setup 参数（只传递用户启用的选项）
+                setup_params = {
+                    "data": df,
+                    "target": target_col,
+                    "train_size": train_size,
+                    "normalize": normalize,
+                    "transformation": transformation,
+                    "remove_multicollinearity": remove_multicollinearity,
+                    "ignore_low_variance": ignore_low_variance,
+                    "polynomial_features": polynomial_features,
+                    "numeric_imputation": numeric_imputation,
+                    "categorical_imputation": categorical_imputation,
+                    "fold_strategy": 'kfold',
+                    "n_jobs": 1,  # 限制线程避免内存爆炸
+                    "session_id": 42,
+                    "verbose": False,
+                    "silent": True
+                }
+
+                # 添加可选参数（仅当用户启用时）
+                if remove_outliers:
+                    setup_params["remove_outliers"] = True
+                    if outliers_threshold is not None:
+                        setup_params["outliers_threshold"] = outliers_threshold
+                if bin_numeric_features:
+                    setup_params["bin_numeric_features"] = bin_numeric_features
+                if combine_rare_levels:
+                    setup_params["combine_rare_levels"] = True
+                    if rare_level_threshold is not None:
+                        setup_params["rare_level_threshold"] = rare_level_threshold
+                if feature_selection:
+                    setup_params["feature_selection"] = True
+                    if feature_selection_threshold is not None:
+                        setup_params["feature_selection_threshold"] = feature_selection_threshold
 
                 # 调用 PyCaret setup
-                exp = setup_func(
-                    data=df,
-                    target=target_col,
-                    train_size=train_size,
-                    normalize=normalize,
-                    transformation=transformation,
-                    remove_multicollinearity=remove_multicollinearity,
-                    ignore_low_variance=ignore_low_variance,
-                    handle_unknown_categorical=handle_unknown_categorical,
-                    polynomial_features=polynomial_features,
-                    feature_selection=truncate_low_importance,  # 近似
-                    fold_strategy='kfold',
-                    n_jobs=1,  # 限制线程避免内存爆炸
-                    session_id=42,
-                    verbose=False,
-                    silent=True  # 避免交互式输入
-                )
+                exp = setup_func(**setup_params)
                 st.session_state.experiment = exp
 
-                # 显示预处理后的数据信息
                 st.info("PyCaret setup completed. Preprocessing applied successfully.")
 
                 # 比较模型
@@ -688,21 +785,29 @@ def training_page():
                 st.session_state.model = best_model
                 st.session_state.training_complete = True
 
-                # 保存测试数据（PyCaret 自动分割，可以通过 get_config 获取）
-                from pycaret.internal.pycaret_experiment import get_config
-                X_test = get_config('X_test')
-                y_test = get_config('y_test')
-                st.session_state.test_data = {'X_test': X_test, 'y_test': y_test}
+                # 尝试获取测试数据
+                if get_config_available:
+                    try:
+                        X_test = get_config('X_test')
+                        y_test = get_config('y_test')
+                        st.session_state.test_data = {'X_test': X_test, 'y_test': y_test}
+                    except Exception as e:
+                        st.warning(f"Could not retrieve test data from experiment: {e}")
+                        st.session_state.test_data = None
+                else:
+                    st.info("Test data storage not available – evaluation will use the model's internal predictions.")
+                    st.session_state.test_data = None
 
-                # 可选：对测试集进行预测并存储
-                predictions = predict_model(best_model, data=X_test)
-                st.session_state.predictions = predictions['prediction_label'] if problem_type == "Classification" else predictions['prediction_label']
+                # 对测试集进行预测并存储（如果有测试数据）
+                if st.session_state.test_data is not None:
+                    predictions = predict_model(best_model, data=st.session_state.test_data['X_test'])
+                    st.session_state.predictions = predictions['prediction_label'] if problem_type == "Classification" else predictions['prediction_label']
 
                 st.success("🎉 Model training completed successfully!")
                 st.balloons()
 
-                # 显示比较结果表格
-                results = pull()  # 获取 compare_models 的结果表
+                # 显示模型比较结果
+                results = pull_func()
                 st.markdown("### 📊 Model Comparison Results")
                 st.dataframe(results, use_container_width=True)
 
@@ -710,6 +815,7 @@ def training_page():
                 st.error(f"❌ Error during training: {str(e)}")
                 st.exception(e)
 
+# ---------- 评估页面 (保持不变) ----------
 def evaluation_page():
     st.markdown('<h2 class="sub-header">📈 Model Performance Evaluation</h2>', unsafe_allow_html=True)
     if not st.session_state.training_complete or st.session_state.model is None:
@@ -722,10 +828,16 @@ def evaluation_page():
     model = st.session_state.model
     problem_type = st.session_state.problem_type
     test_data = st.session_state.test_data
+
+    if test_data is None:
+        st.warning("Test data not available. The model was trained but evaluation cannot be shown. You can still make predictions.")
+        st.markdown("### 🏆 Best Model Details")
+        st.write(model)
+        return
+
     X_test = test_data['X_test']
     y_test = test_data['y_test']
 
-    # 使用 PyCaret 的 predict_model 获取预测
     if problem_type == "Classification":
         predictions = predict_model(model, data=X_test)
         y_pred = predictions['prediction_label']
@@ -758,7 +870,6 @@ def evaluation_page():
         report_df = pd.DataFrame(report).transpose()
         st.dataframe(report_df, use_container_width=True)
 
-        # 使用 PyCaret 的 plot_model 绘制更多图表
         st.markdown("### 📊 Additional Plots (PyCaret)")
         plot_types = ['auc', 'confusion_matrix', 'class_report', 'feature', 'learning']
         selected_plot = st.selectbox("Select plot type", plot_types)
@@ -796,7 +907,6 @@ def evaluation_page():
         fig.add_hline(y=0, line_dash="dash", line_color="red")
         st.plotly_chart(fig, use_container_width=True)
 
-        # PyCaret regression plots
         st.markdown("### 📊 Additional Plots (PyCaret)")
         plot_types = ['residuals', 'error', 'cooks', 'learning', 'feature']
         selected_plot = st.selectbox("Select plot type", plot_types)
@@ -809,6 +919,7 @@ def evaluation_page():
     st.markdown("### 🏆 Best Model Details")
     st.write(model)
 
+# ---------- 预测页面 (保持不变) ----------
 def prediction_page():
     st.markdown('<h2 class="sub-header">🔮 Make Predictions with Trained Model</h2>', unsafe_allow_html=True)
     if not st.session_state.training_complete or st.session_state.model is None:
@@ -830,15 +941,12 @@ def prediction_page():
         if new_file is not None:
             try:
                 new_df = pd.read_csv(new_file)
-                # 确保列与训练数据一致（不需要目标列）
-                # PyCaret 的 predict_model 会自动处理缺失列，但最好提醒用户
                 st.markdown("### 📋 Data Preview")
                 st.dataframe(new_df.head(), use_container_width=True)
 
                 if st.button("🔮 Make Predictions", type="primary"):
                     with st.spinner("Making predictions..."):
                         predictions = predict_model(model, data=new_df)
-                        # predictions 包含原始数据和预测列
                         st.success(f"✅ Predictions complete for {len(predictions)} samples!")
                         st.dataframe(predictions, use_container_width=True)
                         csv = predictions.to_csv(index=False)
@@ -850,13 +958,11 @@ def prediction_page():
 
     elif method == "✍️ Manual Input":
         st.markdown("### ✍️ Enter Values Manually")
-        # 获取特征列（排除目标列）
         feature_cols = [col for col in st.session_state.data.columns if col != st.session_state.target_column]
         input_data = {}
         cols = st.columns(3)
         for i, col_name in enumerate(feature_cols):
             with cols[i % 3]:
-                # 简单推断输入类型：数值型用 number_input，否则用文本/选择
                 if pd.api.types.is_numeric_dtype(st.session_state.data[col_name]):
                     min_val = float(st.session_state.data[col_name].min())
                     max_val = float(st.session_state.data[col_name].max())
@@ -881,7 +987,6 @@ def prediction_page():
             X_test = st.session_state.test_data['X_test']
             y_test = st.session_state.test_data['y_test']
             predictions = predict_model(model, data=X_test)
-            # 合并展示
             comp_df = X_test.copy()
             comp_df['Actual'] = y_test.values
             comp_df['Predicted'] = predictions['prediction_label'].values
@@ -893,6 +998,7 @@ def prediction_page():
         else:
             st.info("No test data available. Please train a model first.")
 
+# ---------- 导出页面 (保持不变) ----------
 def export_page():
     st.markdown('<h2 class="sub-header">💾 Export Model and Results</h2>', unsafe_allow_html=True)
     if not st.session_state.training_complete:
@@ -966,10 +1072,8 @@ This model was generated using PyCaret AutoML through the No-Code ML Platform.
 
 # ---------- 仪表盘 Dashboard ----------
 def dashboard_page():
-    # 设置紫色背景
     set_bg_image_local("purple.jpg")
     
-    # 侧边栏渐变样式
     st.markdown("""
     <style>
     section[data-testid="stSidebar"] {
@@ -978,7 +1082,6 @@ def dashboard_page():
     section[data-testid="stSidebar"] .css-1d391kg {
         background: transparent !important;
     }
-    /* 侧边栏文字颜色设为白色 */
     section[data-testid="stSidebar"] .st-emotion-cache-1wrcr25, 
     section[data-testid="stSidebar"] .st-emotion-cache-16txtl3 {
         color: white !important;
@@ -1026,7 +1129,6 @@ def dashboard_page():
             go_to("front")
             st.rerun()
 
-    # 主内容区域
     if st.session_state.app_page == "📁 Data Upload":
         upload_page()
     elif st.session_state.app_page == "🔍 Exploratory Analysis":
