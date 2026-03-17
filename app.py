@@ -20,12 +20,13 @@ warnings.filterwarnings('ignore')
 
 from supabase import create_client
 
-# ---------- TPOT availability ----------
+# ---------- PyCaret availability ----------
 try:
-    from tpot import TPOTClassifier, TPOTRegressor
-    tpot_available = True
+    from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, pull, save_model, load_model, plot_model
+    from pycaret.regression import setup as reg_setup, compare_models as reg_compare, predict_model as reg_predict, pull, save_model, load_model, plot_model
+    pycaret_available = True
 except ImportError:
-    tpot_available = False
+    pycaret_available = False
 
 # ---------- 页面配置 ----------
 st.set_page_config(
@@ -370,7 +371,9 @@ if "target_column" not in st.session_state:
 if "problem_type" not in st.session_state:
     st.session_state.problem_type = None
 if "model" not in st.session_state:
-    st.session_state.model = None
+    st.session_state.model = None          # 存储 PyCaret 训练好的模型
+if "experiment" not in st.session_state:
+    st.session_state.experiment = None     # 存储 PyCaret 实验设置
 if "predictions" not in st.session_state:
     st.session_state.predictions = None
 if "test_data" not in st.session_state:
@@ -379,14 +382,6 @@ if "training_complete" not in st.session_state:
     st.session_state.training_complete = False
 if "app_page" not in st.session_state:
     st.session_state.app_page = "📁 Data Upload"
-if "imputer_num" not in st.session_state:
-    st.session_state.imputer_num = None
-if "imputer_cat" not in st.session_state:
-    st.session_state.imputer_cat = None
-if "num_cols" not in st.session_state:
-    st.session_state.num_cols = None
-if "cat_cols" not in st.session_state:
-    st.session_state.cat_cols = None
 
 # ---------- 以下为Dashboard子页面 ----------
 def upload_page():
@@ -555,18 +550,18 @@ def eda_page():
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
 
-# ========== 修改点：training_page 函数（已优化以适应云环境）==========
+# ========== 修改点：training_page 函数（使用 PyCaret） ==========
 def training_page():
-    st.markdown('<h2 class="sub-header">📐 Automated Model Training with TPOT</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="sub-header">📐 Automated Model Training with PyCaret</h2>', unsafe_allow_html=True)
     if st.session_state.data is None or st.session_state.target_column is None:
         st.warning("⚠️ Please upload data and set target column first.")
         if st.button("Go to Data Upload"):
             st.session_state.app_page = "📁 Data Upload"
             st.rerun()
         return
-    if not tpot_available:
-        st.error("TPOT is not installed. Please install it to use AutoML features.")
-        st.code("pip install tpot", language="bash")
+    if not pycaret_available:
+        st.error("PyCaret is not installed. Please install it to use AutoML features.")
+        st.code("pip install pycaret", language="bash")
         return
 
     df = st.session_state.data
@@ -584,171 +579,136 @@ def training_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # 初始化会话状态变量（用于绑定滑块）
-    if "train_gens" not in st.session_state:
-        st.session_state.train_gens = 10
-    if "train_pop" not in st.session_state:
-        st.session_state.train_pop = 50
-    if "train_cv" not in st.session_state:
-        st.session_state.train_cv = 5
-    if "train_time" not in st.session_state:
-        st.session_state.train_time = 10
-    if "training_mode" not in st.session_state:
-        st.session_state.training_mode = "Balanced"
+    # 初始化会话状态变量（用于绑定滑块/选项）
+    if "train_folds" not in st.session_state:
+        st.session_state.train_folds = 5
+    if "train_metric" not in st.session_state:
+        st.session_state.train_metric = "Accuracy" if problem_type == "Classification" else "R2"
+    if "train_models" not in st.session_state:
+        st.session_state.train_models = "All"
+    if "train_tune" not in st.session_state:
+        st.session_state.train_tune = False
+    if "train_tune_iters" not in st.session_state:
+        st.session_state.train_tune_iters = 10
 
-    # 训练模式选择（预设值已调小以适应云环境）
-    col_mode, _ = st.columns([1, 2])
-    with col_mode:
-        mode = st.selectbox(
-            "Training Mode Preset",
-            ["Fast", "Balanced", "Accurate"],
-            index=["Fast", "Balanced", "Accurate"].index(st.session_state.training_mode),
-            help="快速：适合云环境（2代，10种群，2折CV，2分钟）；平衡：5代，20种群，3折CV，5分钟；精确：10代，30种群，5折CV，10分钟。若数据量大或追求更高精度，建议在本地运行。"
-        )
-    if mode != st.session_state.training_mode:
-        st.session_state.training_mode = mode
-        if mode == "Fast":
-            st.session_state.train_gens = 2
-            st.session_state.train_pop = 10
-            st.session_state.train_cv = 2
-            st.session_state.train_time = 2
-        elif mode == "Balanced":
-            st.session_state.train_gens = 5
-            st.session_state.train_pop = 20
-            st.session_state.train_cv = 3
-            st.session_state.train_time = 5
-        else:  # Accurate
-            st.session_state.train_gens = 10
-            st.session_state.train_pop = 30
-            st.session_state.train_cv = 5
-            st.session_state.train_time = 10
+    # 参数配置区域
+    col1, col2 = st.columns(2)
 
-    # 参数滑块（绑定会话状态）
-    col1, col2, col3 = st.columns(3)
     with col1:
-        test_size = st.slider("Test Size (%)", 10, 40, 20) / 100
-        generations = st.slider("Generations", 1, 20, value=st.session_state.train_gens, key="train_gens")
+        # 预处理选项
+        st.markdown("#### 🧹 Preprocessing")
+        normalize = st.checkbox("Normalize numerical features", value=False)
+        transformation = st.checkbox("Apply power transformation", value=False)
+        remove_multicollinearity = st.checkbox("Remove multicollinearity", value=False)
+        ignore_low_variance = st.checkbox("Ignore low variance features", value=False)
+        handle_unknown_categorical = st.checkbox("Handle unknown categorical levels", value=True)
+        polynomial_features = st.checkbox("Create polynomial features", value=False)
+        truncate_low_importance = st.checkbox("Truncate low importance features", value=False)  # 对应 feature_importance 相关
+
+        # 数据拆分比例
+        train_size = st.slider("Training data fraction", 0.6, 0.9, 0.8, step=0.05)
+
     with col2:
-        population_size = st.slider("Population Size", 5, 50, value=st.session_state.train_pop, key="train_pop")
-        cv_folds = st.slider("CV Folds", 2, 5, value=st.session_state.train_cv, key="train_cv")  # 最大5折减少计算
-    with col3:
-        max_time_mins = st.slider("Max Time (minutes)", 1, 15, value=st.session_state.train_time, key="train_time")
-        random_state = st.number_input("Random State", 0, 100, 42)
+        st.markdown("#### 🎯 Model Selection")
+        # 模型选择：所有模型或部分模型
+        model_options = ["All", "LightGBM", "XGBoost", "Random Forest", "Decision Tree", "Logistic Regression", "Ridge", "Lasso", "KNN", "SVM", "Naive Bayes"]
+        if problem_type == "Regression":
+            model_options = ["All", "LightGBM", "XGBoost", "Random Forest", "Decision Tree", "Linear Regression", "Ridge", "Lasso", "KNN", "SVM"]
+        selected_models = st.multiselect("Include models (leave empty for all)", model_options, default=["All"])
+        if "All" in selected_models:
+            include_models = None  # PyCaret 默认使用所有模型
+        else:
+            # 将显示名称映射为 PyCaret 内部名称（需要根据实际模型名称调整）
+            # 简单起见，我们直接传递列表，PyCaret 的 compare_models 接受 include 参数
+            include_models = selected_models
 
-    # 新增：数据采样比例（可选，进一步减少计算量）
-    use_sampling = st.checkbox("使用数据采样（推荐大数据集）", value=True)
-    if use_sampling:
-        sample_fraction = st.slider("训练数据采样比例", 0.1, 1.0, 0.3, step=0.1,
-                                    help="使用部分数据训练TPOT，减少计算量。模型将基于采样数据，可能影响精度。")
-    else:
-        sample_fraction = 1.0
+        # 交叉验证折数
+        folds = st.slider("Cross-validation folds", 2, 10, value=st.session_state.train_folds, key="train_folds")
 
-    handle_missing = st.selectbox("Handle Missing Values", ["auto", "impute", "drop"])
+        # 评估指标
+        if problem_type == "Classification":
+            metric_options = ["Accuracy", "AUC", "Recall", "Precision", "F1", "Kappa", "MCC"]
+        else:
+            metric_options = ["R2", "MAE", "MSE", "RMSE", "RMSLE", "MAPE"]
+        metric = st.selectbox("Optimization metric", metric_options, 
+                              index=metric_options.index(st.session_state.train_metric) if st.session_state.train_metric in metric_options else 0,
+                              key="train_metric")
 
-    # 警告信息：提醒用户云环境资源有限
-    st.warning("⚠️ Streamlit Cloud免费环境内存有限（约1GB）。若参数过大或数据量过多，训练可能失败。建议保持默认预设或使用采样。")
+        # 是否进行超参数调优
+        tune = st.checkbox("Tune hyperparameters of the best model", value=st.session_state.train_tune, key="train_tune")
+        if tune:
+            tune_iters = st.slider("Tuning iterations", 5, 50, value=st.session_state.train_tune_iters, key="train_tune_iters")
+
+    # 警告：云环境资源有限
+    st.warning("⚠️ Streamlit Cloud免费环境内存有限（约1GB）。若数据集较大或选择复杂模型，训练可能失败。建议使用较小的数据样本或简化预处理。")
 
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-
-        # 处理缺失值
-        if X.isnull().any().any() or y.isnull().any():
-            if handle_missing == "drop":
-                valid_idx = X.dropna().index.intersection(y.dropna().index)
-                X = X.loc[valid_idx]
-                y = y.loc[valid_idx]
-                st.info(f"Dropped rows with missing values. Remaining: {len(X)} rows.")
-
-        # 数据分割
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
-        st.session_state.test_data = {'X_test': X_test, 'y_test': y_test}
-
-        # 采样（如果启用）
-        if sample_fraction < 1.0:
-            X_train_sampled, _, y_train_sampled, _ = train_test_split(
-                X_train, y_train, train_size=sample_fraction, random_state=random_state, stratify=y_train if problem_type=="Classification" else None
-            )
-            st.info(f"训练数据已采样：从 {len(X_train)} 条降至 {len(X_train_sampled)} 条。")
-        else:
-            X_train_sampled, y_train_sampled = X_train, y_train
-
-        # 缺失值填补
-        num_cols = X_train_sampled.select_dtypes(include=[np.number]).columns.tolist()
-        cat_cols = X_train_sampled.select_dtypes(include=['object']).columns.tolist()
-        st.session_state.num_cols = num_cols
-        st.session_state.cat_cols = cat_cols
-
-        imputer_num = None
-        imputer_cat = None
-        if handle_missing in ["auto", "impute"] and (X_train_sampled.isnull().any().any() or y_train_sampled.isnull().any()):
-            if num_cols:
-                imputer_num = SimpleImputer(strategy='mean')
-                X_train_sampled[num_cols] = imputer_num.fit_transform(X_train_sampled[num_cols])
-                X_test[num_cols] = imputer_num.transform(X_test[num_cols])
-            if cat_cols:
-                imputer_cat = SimpleImputer(strategy='most_frequent')
-                X_train_sampled[cat_cols] = imputer_cat.fit_transform(X_train_sampled[cat_cols])
-                X_test[cat_cols] = imputer_cat.transform(X_test[cat_cols])
-            st.info("Missing values imputed (mean for numerical, mode for categorical).")
-        st.session_state.imputer_num = imputer_num
-        st.session_state.imputer_cat = imputer_cat
-
-        # 分类特征的索引（用于TPOT的categorical_features参数）
-        cat_indices = [X_train_sampled.columns.get_loc(c) for c in cat_cols if c in X_train_sampled.columns]
-
-        # 调用缓存函数训练TPOT
-        with st.spinner("🧠 TPOT is searching for the best pipeline. This may take several minutes..."):
+        with st.spinner("🧠 PyCaret is setting up the environment and training models. This may take several minutes..."):
             try:
-                model = train_tpot_model(
-                    X_train_sampled, y_train_sampled,
-                    problem_type,
-                    generations,
-                    population_size,
-                    cv_folds,
-                    max_time_mins,
-                    random_state,
-                    cat_indices
+                # 根据问题类型选择相应的 setup 函数
+                if problem_type == "Classification":
+                    setup_func = clf_setup
+                    compare_func = clf_compare
+                else:
+                    setup_func = reg_setup
+                    compare_func = reg_compare
+
+                # 调用 PyCaret setup
+                exp = setup_func(
+                    data=df,
+                    target=target_col,
+                    train_size=train_size,
+                    normalize=normalize,
+                    transformation=transformation,
+                    remove_multicollinearity=remove_multicollinearity,
+                    ignore_low_variance=ignore_low_variance,
+                    handle_unknown_categorical=handle_unknown_categorical,
+                    polynomial_features=polynomial_features,
+                    feature_selection=truncate_low_importance,  # 近似
+                    fold_strategy='kfold',
+                    n_jobs=1,  # 限制线程避免内存爆炸
+                    session_id=42,
+                    verbose=False,
+                    silent=True  # 避免交互式输入
                 )
-                st.session_state.model = model
-                st.session_state.predictions = model.predict(X_test)
+                st.session_state.experiment = exp
+
+                # 显示预处理后的数据信息
+                st.info("PyCaret setup completed. Preprocessing applied successfully.")
+
+                # 比较模型
+                with st.spinner("Comparing models..."):
+                    best_model = compare_func(
+                        include=include_models,
+                        fold=folds,
+                        sort=metric,
+                        n_select=1,
+                        verbose=False
+                    )
+                st.session_state.model = best_model
                 st.session_state.training_complete = True
+
+                # 保存测试数据（PyCaret 自动分割，可以通过 get_config 获取）
+                from pycaret.internal.pycaret_experiment import get_config
+                X_test = get_config('X_test')
+                y_test = get_config('y_test')
+                st.session_state.test_data = {'X_test': X_test, 'y_test': y_test}
+
+                # 可选：对测试集进行预测并存储
+                predictions = predict_model(best_model, data=X_test)
+                st.session_state.predictions = predictions['prediction_label'] if problem_type == "Classification" else predictions['prediction_label']
 
                 st.success("🎉 Model training completed successfully!")
                 st.balloons()
+
+                # 显示比较结果表格
+                results = pull()  # 获取 compare_models 的结果表
+                st.markdown("### 📊 Model Comparison Results")
+                st.dataframe(results, use_container_width=True)
+
             except Exception as e:
                 st.error(f"❌ Error during training: {str(e)}")
-                st.exception(e)  # 显示详细错误
-
-# 定义缓存函数（放在training_page外部，但为了完整，放在文件顶部附近）
-@st.cache_resource(show_spinner="Training TPOT model...")
-def train_tpot_model(X_train, y_train, problem_type, generations, population_size, cv, max_time_mins, random_state, cat_indices):
-    if problem_type == "Classification":
-        tpot = TPOTClassifier(
-            generations=generations,
-            population_size=population_size,
-            cv=cv,
-            random_state=random_state,
-            verbosity=2,
-            n_jobs=1,  # 强制单线程，避免内存竞争
-            max_time_mins=max_time_mins,
-            categorical_features=cat_indices if cat_indices else None
-        )
-    else:
-        tpot = TPOTRegressor(
-            generations=generations,
-            population_size=population_size,
-            cv=cv,
-            random_state=random_state,
-            verbosity=2,
-            n_jobs=1,
-            max_time_mins=max_time_mins,
-            categorical_features=cat_indices if cat_indices else None
-        )
-    tpot.fit(X_train, y_train)
-    return tpot
+                st.exception(e)
 
 def evaluation_page():
     st.markdown('<h2 class="sub-header">📈 Model Performance Evaluation</h2>', unsafe_allow_html=True)
@@ -760,16 +720,24 @@ def evaluation_page():
         return
 
     model = st.session_state.model
-    predictions = st.session_state.predictions
-    test_data = st.session_state.test_data
-    y_test = test_data['y_test']
     problem_type = st.session_state.problem_type
+    test_data = st.session_state.test_data
+    X_test = test_data['X_test']
+    y_test = test_data['y_test']
+
+    # 使用 PyCaret 的 predict_model 获取预测
+    if problem_type == "Classification":
+        predictions = predict_model(model, data=X_test)
+        y_pred = predictions['prediction_label']
+    else:
+        predictions = predict_model(model, data=X_test)
+        y_pred = predictions['prediction_label']
 
     if problem_type == "Classification":
-        acc = accuracy_score(y_test, predictions)
-        prec = precision_score(y_test, predictions, average='weighted', zero_division=0)
-        rec = recall_score(y_test, predictions, average='weighted', zero_division=0)
-        f1 = f1_score(y_test, predictions, average='weighted', zero_division=0)
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+        rec = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+        f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Accuracy", f"{acc:.4f}")
         col2.metric("Precision", f"{prec:.4f}")
@@ -777,7 +745,7 @@ def evaluation_page():
         col4.metric("F1-Score", f"{f1:.4f}")
 
         st.markdown("### 🎯 Confusion Matrix")
-        cm = confusion_matrix(y_test, predictions)
+        cm = confusion_matrix(y_test, y_pred)
         fig, ax = plt.subplots(figsize=(8, 6))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
         ax.set_xlabel('Predicted')
@@ -786,14 +754,25 @@ def evaluation_page():
         st.pyplot(fig)
 
         st.markdown("### 📝 Detailed Classification Report")
-        report = classification_report(y_test, predictions, output_dict=True)
+        report = classification_report(y_test, y_pred, output_dict=True)
         report_df = pd.DataFrame(report).transpose()
         st.dataframe(report_df, use_container_width=True)
-    else:
-        mae = mean_absolute_error(y_test, predictions)
-        mse = mean_squared_error(y_test, predictions)
+
+        # 使用 PyCaret 的 plot_model 绘制更多图表
+        st.markdown("### 📊 Additional Plots (PyCaret)")
+        plot_types = ['auc', 'confusion_matrix', 'class_report', 'feature', 'learning']
+        selected_plot = st.selectbox("Select plot type", plot_types)
+        if st.button("Generate Plot"):
+            try:
+                plot_model(model, plot=selected_plot, display_format='streamlit')
+            except Exception as e:
+                st.error(f"Could not generate plot: {e}")
+
+    else:  # Regression
+        mae = mean_absolute_error(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
         rmse = np.sqrt(mse)
-        r2 = r2_score(y_test, predictions)
+        r2 = r2_score(y_test, y_pred)
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("MAE", f"{mae:.4f}")
         col2.metric("MSE", f"{mse:.4f}")
@@ -801,28 +780,34 @@ def evaluation_page():
         col4.metric("R² Score", f"{r2:.4f}")
 
         st.markdown("### 📈 Actual vs Predicted")
-        fig = px.scatter(x=y_test, y=predictions, labels={'x': 'Actual', 'y': 'Predicted'},
+        fig = px.scatter(x=y_test, y=y_pred, labels={'x': 'Actual', 'y': 'Predicted'},
             title='Actual vs Predicted Values')
-        max_val = max(max(y_test), max(predictions))
-        min_val = min(min(y_test), min(predictions))
+        max_val = max(max(y_test), max(y_pred))
+        min_val = min(min(y_test), min(y_pred))
         fig.add_trace(go.Scatter(x=[min_val, max_val], y=[min_val, max_val],
                                 mode='lines', name='Perfect Prediction',
                                 line=dict(color='red', dash='dash')))
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("### 📉 Residual Plot")
-        residuals = y_test - predictions
-        fig = px.scatter(x=predictions, y=residuals, labels={'x': 'Predicted', 'y': 'Residuals'},
+        residuals = y_test - y_pred
+        fig = px.scatter(x=y_pred, y=residuals, labels={'x': 'Predicted', 'y': 'Residuals'},
                         title='Residual Plot')
         fig.add_hline(y=0, line_dash="dash", line_color="red")
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("### 🏆 Best Pipeline Found by TPOT")
-    if model is not None:
-        st.code(model.fitted_pipeline_, language='python')
-        pipeline_code = model.export()
-        st.download_button("📥 Download Pipeline Code", data=pipeline_code,
-                        file_name="best_pipeline.py", mime="text/python")
+        # PyCaret regression plots
+        st.markdown("### 📊 Additional Plots (PyCaret)")
+        plot_types = ['residuals', 'error', 'cooks', 'learning', 'feature']
+        selected_plot = st.selectbox("Select plot type", plot_types)
+        if st.button("Generate Plot"):
+            try:
+                plot_model(model, plot=selected_plot, display_format='streamlit')
+            except Exception as e:
+                st.error(f"Could not generate plot: {e}")
+
+    st.markdown("### 🏆 Best Model Details")
+    st.write(model)
 
 def prediction_page():
     st.markdown('<h2 class="sub-header">🔮 Make Predictions with Trained Model</h2>', unsafe_allow_html=True)
@@ -834,6 +819,8 @@ def prediction_page():
         return
 
     model = st.session_state.model
+    problem_type = st.session_state.problem_type
+
     method = st.radio("Select prediction method:",
                     ["📤 Upload New Data", "✍️ Manual Input", "📊 Use Test Data"])
 
@@ -843,28 +830,18 @@ def prediction_page():
         if new_file is not None:
             try:
                 new_df = pd.read_csv(new_file)
-                original_cols = st.session_state.data.drop(columns=[st.session_state.target_column]).columns.tolist()
-                missing_cols = set(original_cols) - set(new_df.columns)
-                if missing_cols:
-                    st.warning(f"⚠️ Missing columns: {missing_cols}. They will be filled with 0.")
-                new_df = new_df.reindex(columns=original_cols, fill_value=0)
-
-                if st.session_state.imputer_num is not None and st.session_state.num_cols:
-                    new_df[st.session_state.num_cols] = st.session_state.imputer_num.transform(new_df[st.session_state.num_cols])
-                if st.session_state.imputer_cat is not None and st.session_state.cat_cols:
-                    new_df[st.session_state.cat_cols] = st.session_state.imputer_cat.transform(new_df[st.session_state.cat_cols])
-
+                # 确保列与训练数据一致（不需要目标列）
+                # PyCaret 的 predict_model 会自动处理缺失列，但最好提醒用户
                 st.markdown("### 📋 Data Preview")
                 st.dataframe(new_df.head(), use_container_width=True)
 
                 if st.button("🔮 Make Predictions", type="primary"):
                     with st.spinner("Making predictions..."):
-                        preds = model.predict(new_df)
-                        results_df = new_df.copy()
-                        results_df['Predictions'] = preds
-                        st.success(f"✅ Predictions complete for {len(preds)} samples!")
-                        st.dataframe(results_df, use_container_width=True)
-                        csv = results_df.to_csv(index=False)
+                        predictions = predict_model(model, data=new_df)
+                        # predictions 包含原始数据和预测列
+                        st.success(f"✅ Predictions complete for {len(predictions)} samples!")
+                        st.dataframe(predictions, use_container_width=True)
+                        csv = predictions.to_csv(index=False)
                         b64 = base64.b64encode(csv.encode()).decode()
                         href = f'<a href="data:file/csv;base64,{b64}" download="predictions.csv">📥 Download Predictions</a>'
                         st.markdown(href, unsafe_allow_html=True)
@@ -873,12 +850,14 @@ def prediction_page():
 
     elif method == "✍️ Manual Input":
         st.markdown("### ✍️ Enter Values Manually")
-        feature_cols = st.session_state.data.drop(columns=[st.session_state.target_column]).columns.tolist()
+        # 获取特征列（排除目标列）
+        feature_cols = [col for col in st.session_state.data.columns if col != st.session_state.target_column]
         input_data = {}
         cols = st.columns(3)
         for i, col_name in enumerate(feature_cols):
             with cols[i % 3]:
-                if col_name in st.session_state.num_cols:
+                # 简单推断输入类型：数值型用 number_input，否则用文本/选择
+                if pd.api.types.is_numeric_dtype(st.session_state.data[col_name]):
                     min_val = float(st.session_state.data[col_name].min())
                     max_val = float(st.session_state.data[col_name].max())
                     mean_val = float(st.session_state.data[col_name].mean())
@@ -888,14 +867,11 @@ def prediction_page():
                     input_data[col_name] = st.selectbox(col_name, unique_vals)
         if st.button("🔮 Predict", type="primary"):
             input_df = pd.DataFrame([input_data])
-            if st.session_state.imputer_num is not None and st.session_state.num_cols:
-                input_df[st.session_state.num_cols] = st.session_state.imputer_num.transform(input_df[st.session_state.num_cols])
-            if st.session_state.imputer_cat is not None and st.session_state.cat_cols:
-                input_df[st.session_state.cat_cols] = st.session_state.imputer_cat.transform(input_df[st.session_state.cat_cols])
-            pred = model.predict(input_df)[0]
+            predictions = predict_model(model, data=input_df)
+            pred_value = predictions['prediction_label'][0]
             st.markdown(f"""
             <div class="success-box">
-            <h3>Predicted {st.session_state.target_column}: {pred}</h3>
+            <h3>Predicted {st.session_state.target_column}: {pred_value}</h3>
             </div>
             """, unsafe_allow_html=True)
 
@@ -904,10 +880,11 @@ def prediction_page():
         if st.session_state.test_data is not None:
             X_test = st.session_state.test_data['X_test']
             y_test = st.session_state.test_data['y_test']
-            preds = model.predict(X_test)
+            predictions = predict_model(model, data=X_test)
+            # 合并展示
             comp_df = X_test.copy()
             comp_df['Actual'] = y_test.values
-            comp_df['Predicted'] = preds
+            comp_df['Predicted'] = predictions['prediction_label'].values
             st.dataframe(comp_df.head(20), use_container_width=True)
             csv = comp_df.to_csv(index=False)
             b64 = base64.b64encode(csv.encode()).decode()
@@ -927,12 +904,18 @@ def export_page():
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### 🐍 Python Code")
-        if st.button("Generate Pipeline Code"):
-            pipeline_code = st.session_state.model.export()
-            st.code(pipeline_code, language='python')
-            st.download_button("📥 Download Pipeline", data=pipeline_code,
-                            file_name="tpot_pipeline.py", mime="text/python")
+        st.markdown("#### 🐍 Save Model (Pickle)")
+        if st.button("Export Model as Pickle"):
+            try:
+                save_model(st.session_state.model, 'best_model')
+                with open('best_model.pkl', 'rb') as f:
+                    model_bytes = f.read()
+                b64 = base64.b64encode(model_bytes).decode()
+                href = f'<a href="data:file/pkl;base64,{b64}" download="best_model.pkl">📥 Download model.pkl</a>'
+                st.markdown(href, unsafe_allow_html=True)
+                st.success("Model exported successfully.")
+            except Exception as e:
+                st.error(f"Export failed: {e}")
     with col2:
         st.markdown("#### 📊 Model Report")
         if st.button("Generate Model Report"):
@@ -940,7 +923,7 @@ def export_page():
 # Machine Learning Model Report
 
 ## Project Information
-- Platform: No-Code ML Platform
+- Platform: No-Code ML Platform (PyCaret)
 - Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - Problem Type: {st.session_state.problem_type}
 - Target Column: {st.session_state.target_column}
@@ -950,11 +933,11 @@ def export_page():
 - Features: {len(st.session_state.data.columns) - 1 if st.session_state.data else 'N/A'}
 
 ## Model Information
-- Best Pipeline: {st.session_state.model.fitted_pipeline_ if st.session_state.model else 'N/A'}
+- Best Model: {st.session_state.model}
 - Training Completed: {st.session_state.training_complete}
 
 ## Notes
-This model was generated using TPOT AutoML through the No-Code ML Platform.
+This model was generated using PyCaret AutoML through the No-Code ML Platform.
 """
             st.code(report_content, language='markdown')
             st.download_button("📥 Download Report", data=report_content,
@@ -975,8 +958,7 @@ This model was generated using TPOT AutoML through the No-Code ML Platform.
     st.markdown("### 🔄 Reset Platform")
     st.warning("This will clear all data and models from the current session.")
     if st.button("🔄 Reset All Data", type="secondary"):
-        keys = ["data", "target_column", "problem_type", "model", "predictions", "test_data", "training_complete",
-                "imputer_num", "imputer_cat", "num_cols", "cat_cols"]
+        keys = ["data", "target_column", "problem_type", "model", "experiment", "predictions", "test_data", "training_complete"]
         for key in keys:
             if key in st.session_state:
                 st.session_state[key] = None
@@ -1026,19 +1008,18 @@ def dashboard_page():
         This platform enables:
         - CSV data upload
         - Automated EDA
-        - AutoML with TPOT
+        - AutoML with PyCaret
         - Model evaluation
         - No-code predictions
         """)
-        if not tpot_available:
-            st.error("⚠️ TPOT not installed. Install with: `pip install tpot`")
-            st.code("pip install tpot", language="bash")
+        if not pycaret_available:
+            st.error("⚠️ PyCaret not installed. Install with: `pip install pycaret`")
+            st.code("pip install pycaret", language="bash")
 
         if st.button("👋🏻 Logout", type="primary"):
             st.session_state.logged_in = False
             st.session_state.user_name = ""
-            keys = ["data", "target_column", "problem_type", "model", "predictions", "test_data", "training_complete",
-                    "imputer_num", "imputer_cat", "num_cols", "cat_cols"]
+            keys = ["data", "target_column", "problem_type", "model", "experiment", "predictions", "test_data", "training_complete"]
             for key in keys:
                 if key in st.session_state:
                     st.session_state[key] = None
