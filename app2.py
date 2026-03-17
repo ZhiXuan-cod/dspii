@@ -906,7 +906,7 @@ This model was generated using TPOT AutoML through the No-Code ML Platform.
 # ---------- 仪表盘 Dashboard ----------
 def dashboard_page():
     # 设置紫色背景
-    set_bg_image_local("purple.png")
+    set_bg_image_local("purple.jpg")
     
     # 侧边栏渐变样式
     st.markdown("""
