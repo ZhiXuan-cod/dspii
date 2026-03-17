@@ -555,6 +555,7 @@ def eda_page():
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
 
+# ========== 修改点：training_page 函数（已优化以适应云环境）==========
 def training_page():
     st.markdown('<h2 class="sub-header">📐 Automated Model Training with TPOT</h2>', unsafe_allow_html=True)
     if st.session_state.data is None or st.session_state.target_column is None:
@@ -583,7 +584,7 @@ def training_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # ---------- 初始化会话状态变量（用于绑定滑块）----------
+    # 初始化会话状态变量（用于绑定滑块）
     if "train_gens" not in st.session_state:
         st.session_state.train_gens = 10
     if "train_pop" not in st.session_state:
@@ -595,52 +596,63 @@ def training_page():
     if "training_mode" not in st.session_state:
         st.session_state.training_mode = "Balanced"
 
-    # ---------- 训练模式选择（预设值）----------
+    # 训练模式选择（预设值已调小以适应云环境）
     col_mode, _ = st.columns([1, 2])
     with col_mode:
         mode = st.selectbox(
             "Training Mode Preset",
             ["Fast", "Balanced", "Accurate"],
             index=["Fast", "Balanced", "Accurate"].index(st.session_state.training_mode),
-            help="快速：降低参数以减少训练时间；精确：增加参数以追求更高性能"
+            help="快速：适合云环境（2代，10种群，2折CV，2分钟）；平衡：5代，20种群，3折CV，5分钟；精确：10代，30种群，5折CV，10分钟。若数据量大或追求更高精度，建议在本地运行。"
         )
-    # 当模式改变时，更新对应的会话状态变量
     if mode != st.session_state.training_mode:
         st.session_state.training_mode = mode
         if mode == "Fast":
+            st.session_state.train_gens = 2
+            st.session_state.train_pop = 10
+            st.session_state.train_cv = 2
+            st.session_state.train_time = 2
+        elif mode == "Balanced":
             st.session_state.train_gens = 5
             st.session_state.train_pop = 20
             st.session_state.train_cv = 3
             st.session_state.train_time = 5
-        elif mode == "Balanced":
+        else:  # Accurate
             st.session_state.train_gens = 10
-            st.session_state.train_pop = 50
+            st.session_state.train_pop = 30
             st.session_state.train_cv = 5
             st.session_state.train_time = 10
-        else:  # Accurate
-            st.session_state.train_gens = 50
-            st.session_state.train_pop = 100
-            st.session_state.train_cv = 10
-            st.session_state.train_time = 30
 
-    # ---------- 参数滑块（绑定会话状态）----------
+    # 参数滑块（绑定会话状态）
     col1, col2, col3 = st.columns(3)
     with col1:
         test_size = st.slider("Test Size (%)", 10, 40, 20) / 100
-        generations = st.slider("Generations", 5, 50, value=st.session_state.train_gens, key="train_gens")
+        generations = st.slider("Generations", 1, 20, value=st.session_state.train_gens, key="train_gens")
     with col2:
-        population_size = st.slider("Population Size", 10, 100, value=st.session_state.train_pop, key="train_pop")
-        cv_folds = st.slider("CV Folds", 2, 10, value=st.session_state.train_cv, key="train_cv")
+        population_size = st.slider("Population Size", 5, 50, value=st.session_state.train_pop, key="train_pop")
+        cv_folds = st.slider("CV Folds", 2, 5, value=st.session_state.train_cv, key="train_cv")  # 最大5折减少计算
     with col3:
-        max_time_mins = st.slider("Max Time (minutes)", 1, 60, value=st.session_state.train_time, key="train_time")
+        max_time_mins = st.slider("Max Time (minutes)", 1, 15, value=st.session_state.train_time, key="train_time")
         random_state = st.number_input("Random State", 0, 100, 42)
 
+    # 新增：数据采样比例（可选，进一步减少计算量）
+    use_sampling = st.checkbox("使用数据采样（推荐大数据集）", value=True)
+    if use_sampling:
+        sample_fraction = st.slider("训练数据采样比例", 0.1, 1.0, 0.3, step=0.1,
+                                    help="使用部分数据训练TPOT，减少计算量。模型将基于采样数据，可能影响精度。")
+    else:
+        sample_fraction = 1.0
+
     handle_missing = st.selectbox("Handle Missing Values", ["auto", "impute", "drop"])
+
+    # 警告信息：提醒用户云环境资源有限
+    st.warning("⚠️ Streamlit Cloud免费环境内存有限（约1GB）。若参数过大或数据量过多，训练可能失败。建议保持默认预设或使用采样。")
 
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
         X = df.drop(columns=[target_col])
         y = df[target_col]
 
+        # 处理缺失值
         if X.isnull().any().any() or y.isnull().any():
             if handle_missing == "drop":
                 valid_idx = X.dropna().index.intersection(y.dropna().index)
@@ -648,69 +660,95 @@ def training_page():
                 y = y.loc[valid_idx]
                 st.info(f"Dropped rows with missing values. Remaining: {len(X)} rows.")
 
-        num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-        cat_cols = X.select_dtypes(include=['object']).columns.tolist()
-
-        st.session_state.num_cols = num_cols
-        st.session_state.cat_cols = cat_cols
-
+        # 数据分割
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state
         )
         st.session_state.test_data = {'X_test': X_test, 'y_test': y_test}
 
+        # 采样（如果启用）
+        if sample_fraction < 1.0:
+            X_train_sampled, _, y_train_sampled, _ = train_test_split(
+                X_train, y_train, train_size=sample_fraction, random_state=random_state, stratify=y_train if problem_type=="Classification" else None
+            )
+            st.info(f"训练数据已采样：从 {len(X_train)} 条降至 {len(X_train_sampled)} 条。")
+        else:
+            X_train_sampled, y_train_sampled = X_train, y_train
+
+        # 缺失值填补
+        num_cols = X_train_sampled.select_dtypes(include=[np.number]).columns.tolist()
+        cat_cols = X_train_sampled.select_dtypes(include=['object']).columns.tolist()
+        st.session_state.num_cols = num_cols
+        st.session_state.cat_cols = cat_cols
+
         imputer_num = None
         imputer_cat = None
-        if handle_missing in ["auto", "impute"] and (X_train.isnull().any().any() or y_train.isnull().any()):
+        if handle_missing in ["auto", "impute"] and (X_train_sampled.isnull().any().any() or y_train_sampled.isnull().any()):
             if num_cols:
                 imputer_num = SimpleImputer(strategy='mean')
-                X_train[num_cols] = imputer_num.fit_transform(X_train[num_cols])
+                X_train_sampled[num_cols] = imputer_num.fit_transform(X_train_sampled[num_cols])
                 X_test[num_cols] = imputer_num.transform(X_test[num_cols])
             if cat_cols:
                 imputer_cat = SimpleImputer(strategy='most_frequent')
-                X_train[cat_cols] = imputer_cat.fit_transform(X_train[cat_cols])
+                X_train_sampled[cat_cols] = imputer_cat.fit_transform(X_train_sampled[cat_cols])
                 X_test[cat_cols] = imputer_cat.transform(X_test[cat_cols])
             st.info("Missing values imputed (mean for numerical, mode for categorical).")
-
         st.session_state.imputer_num = imputer_num
         st.session_state.imputer_cat = imputer_cat
 
-        cat_indices = [X.columns.get_loc(c) for c in cat_cols if c in X.columns]
+        # 分类特征的索引（用于TPOT的categorical_features参数）
+        cat_indices = [X_train_sampled.columns.get_loc(c) for c in cat_cols if c in X_train_sampled.columns]
 
+        # 调用缓存函数训练TPOT
         with st.spinner("🧠 TPOT is searching for the best pipeline. This may take several minutes..."):
             try:
-                if problem_type == "Classification":
-                    tpot = TPOTClassifier(
-                        generations=generations,
-                        population_size=population_size,
-                        cv=cv_folds,
-                        random_state=random_state,
-                        verbosity=2,
-                        n_jobs=-1,
-                        max_time_mins=max_time_mins,
-                        categorical_features=cat_indices if cat_indices else None
-                    )
-                else:
-                    tpot = TPOTRegressor(
-                        generations=generations,
-                        population_size=population_size,
-                        cv=cv_folds,
-                        random_state=random_state,
-                        verbosity=2,
-                        n_jobs=-1,
-                        max_time_mins=max_time_mins,
-                        categorical_features=cat_indices if cat_indices else None
-                    )
-
-                tpot.fit(X_train, y_train)
-                st.session_state.model = tpot
-                st.session_state.predictions = tpot.predict(X_test)
+                model = train_tpot_model(
+                    X_train_sampled, y_train_sampled,
+                    problem_type,
+                    generations,
+                    population_size,
+                    cv_folds,
+                    max_time_mins,
+                    random_state,
+                    cat_indices
+                )
+                st.session_state.model = model
+                st.session_state.predictions = model.predict(X_test)
                 st.session_state.training_complete = True
 
                 st.success("🎉 Model training completed successfully!")
                 st.balloons()
             except Exception as e:
                 st.error(f"❌ Error during training: {str(e)}")
+                st.exception(e)  # 显示详细错误
+
+# 定义缓存函数（放在training_page外部，但为了完整，放在文件顶部附近）
+@st.cache_resource(show_spinner="Training TPOT model...")
+def train_tpot_model(X_train, y_train, problem_type, generations, population_size, cv, max_time_mins, random_state, cat_indices):
+    if problem_type == "Classification":
+        tpot = TPOTClassifier(
+            generations=generations,
+            population_size=population_size,
+            cv=cv,
+            random_state=random_state,
+            verbosity=2,
+            n_jobs=1,  # 强制单线程，避免内存竞争
+            max_time_mins=max_time_mins,
+            categorical_features=cat_indices if cat_indices else None
+        )
+    else:
+        tpot = TPOTRegressor(
+            generations=generations,
+            population_size=population_size,
+            cv=cv,
+            random_state=random_state,
+            verbosity=2,
+            n_jobs=1,
+            max_time_mins=max_time_mins,
+            categorical_features=cat_indices if cat_indices else None
+        )
+    tpot.fit(X_train, y_train)
+    return tpot
 
 def evaluation_page():
     st.markdown('<h2 class="sub-header">📈 Model Performance Evaluation</h2>', unsafe_allow_html=True)
