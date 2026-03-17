@@ -388,7 +388,7 @@ if "num_cols" not in st.session_state:
 if "cat_cols" not in st.session_state:
     st.session_state.cat_cols = None
 
-# ---------- 以下为Dashboard子页面（移除了各自的背景设置，统一使用purple.png）----------
+# ---------- 以下为Dashboard子页面 ----------
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     col1, col2 = st.columns([2, 1])
@@ -583,15 +583,56 @@ def training_page():
     </div>
     """, unsafe_allow_html=True)
 
+    # ---------- 初始化会话状态变量（用于绑定滑块）----------
+    if "train_gens" not in st.session_state:
+        st.session_state.train_gens = 10
+    if "train_pop" not in st.session_state:
+        st.session_state.train_pop = 50
+    if "train_cv" not in st.session_state:
+        st.session_state.train_cv = 5
+    if "train_time" not in st.session_state:
+        st.session_state.train_time = 10
+    if "training_mode" not in st.session_state:
+        st.session_state.training_mode = "Balanced"
+
+    # ---------- 训练模式选择（预设值）----------
+    col_mode, _ = st.columns([1, 2])
+    with col_mode:
+        mode = st.selectbox(
+            "Training Mode Preset",
+            ["Fast", "Balanced", "Accurate"],
+            index=["Fast", "Balanced", "Accurate"].index(st.session_state.training_mode),
+            help="快速：降低参数以减少训练时间；精确：增加参数以追求更高性能"
+        )
+    # 当模式改变时，更新对应的会话状态变量
+    if mode != st.session_state.training_mode:
+        st.session_state.training_mode = mode
+        if mode == "Fast":
+            st.session_state.train_gens = 5
+            st.session_state.train_pop = 20
+            st.session_state.train_cv = 3
+            st.session_state.train_time = 5
+        elif mode == "Balanced":
+            st.session_state.train_gens = 10
+            st.session_state.train_pop = 50
+            st.session_state.train_cv = 5
+            st.session_state.train_time = 10
+        else:  # Accurate
+            st.session_state.train_gens = 50
+            st.session_state.train_pop = 100
+            st.session_state.train_cv = 10
+            st.session_state.train_time = 30
+
+    # ---------- 参数滑块（绑定会话状态）----------
     col1, col2, col3 = st.columns(3)
     with col1:
         test_size = st.slider("Test Size (%)", 10, 40, 20) / 100
-        generations = st.slider("Generations", 5, 50, 10)
+        generations = st.slider("Generations", 5, 50, value=st.session_state.train_gens, key="train_gens")
     with col2:
-        population_size = st.slider("Population Size", 10, 100, 50)
-        cv_folds = st.slider("CV Folds", 2, 10, 5)
+        population_size = st.slider("Population Size", 10, 100, value=st.session_state.train_pop, key="train_pop")
+        cv_folds = st.slider("CV Folds", 2, 10, value=st.session_state.train_cv, key="train_cv")
     with col3:
-        max_time_mins = st.slider("Max Time (minutes)", 1, 60, 10)
+        max_time_mins = st.slider("Max Time (minutes)", 1, 60, value=st.session_state.train_time, key="train_time")
         random_state = st.number_input("Random State", 0, 100, 42)
 
     handle_missing = st.selectbox("Handle Missing Values", ["auto", "impute", "drop"])
