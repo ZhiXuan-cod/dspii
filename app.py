@@ -656,48 +656,62 @@ def training_page():
         X = df.drop(columns=[target_col])
         y = df[target_col]
 
-        if X.isnull().any().any() or y.isnull().any():
-            if handle_missing == "drop":
-                valid_idx = X.dropna().index.intersection(y.dropna().index)
-                X = X.loc[valid_idx]
-                y = y.loc[valid_idx]
-                st.info(f"Dropped rows with missing values. Remaining: {len(X)} rows.")
+        # 统一处理缺失值（包括目标变量）
+        if handle_missing == "drop":
+            # 删除特征或目标中任何含有缺失值的行
+            valid_idx = X.dropna().index.intersection(y.dropna().index)
+            X = X.loc[valid_idx].copy()
+            y = y.loc[valid_idx].copy()
+            st.info(f"Dropped rows with missing values. Remaining: {len(X)} rows.")
+        elif handle_missing in ["auto", "impute"]:
+            # 如果目标有缺失，先丢弃（目标值不建议填充）
+            if y.isnull().any():
+                valid_idx = y.dropna().index
+                X = X.loc[valid_idx].copy()
+                y = y.loc[valid_idx].copy()
+                st.warning(f"Dropped rows where target is missing. Remaining: {len(X)} rows.")
+            # 特征的缺失将在分割后填充
 
-        num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-        cat_cols = X.select_dtypes(include=['object']).columns.tolist()
-
-        st.session_state.num_cols = num_cols
-        st.session_state.cat_cols = cat_cols
-
+        # 分割数据集
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state
         )
         st.session_state.test_data = {'X_test': X_test, 'y_test': y_test}
 
+        # 处理特征的缺失值（填充）
         imputer_num = None
         imputer_cat = None
-        if handle_missing in ["auto", "impute"] and (X_train.isnull().any().any() or y_train.isnull().any()):
+        if handle_missing in ["auto", "impute"] and X_train.isnull().any().any():
+            # 使用副本避免警告
+            X_train = X_train.copy()
+            X_test = X_test.copy()
+            num_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
+            cat_cols = X_train.select_dtypes(include=['object']).columns.tolist()
             if num_cols:
                 imputer_num = SimpleImputer(strategy='mean')
-                X_train[num_cols] = imputer_num.fit_transform(X_train[num_cols])
-                X_test[num_cols] = imputer_num.transform(X_test[num_cols])
+                X_train.loc[:, num_cols] = imputer_num.fit_transform(X_train[num_cols])
+                X_test.loc[:, num_cols] = imputer_num.transform(X_test[num_cols])
             if cat_cols:
                 imputer_cat = SimpleImputer(strategy='most_frequent')
-                X_train[cat_cols] = imputer_cat.fit_transform(X_train[cat_cols])
-                X_test[cat_cols] = imputer_cat.transform(X_test[cat_cols])
+                X_train.loc[:, cat_cols] = imputer_cat.fit_transform(X_train[cat_cols])
+                X_test.loc[:, cat_cols] = imputer_cat.transform(X_test[cat_cols])
             st.info("Missing values imputed (mean for numerical, mode for categorical).")
 
         st.session_state.imputer_num = imputer_num
         st.session_state.imputer_cat = imputer_cat
+        st.session_state.num_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
+        st.session_state.cat_cols = X_train.select_dtypes(include=['object']).columns.tolist()
 
-        cat_indices = [X.columns.get_loc(c) for c in cat_cols if c in X.columns]
+        # 分类特征索引
+        cat_indices = [X_train.columns.get_loc(c) for c in st.session_state.cat_cols if c in X_train.columns]
 
         with st.spinner("🧠 TPOT is searching for the best pipeline. This may take several minutes..."):
             try:
+                # 使用用户通过滑块设置的参数（存储在 session_state 中）
                 if problem_type == "Classification":
                     tpot = TPOTClassifier(
-                        generations=5,
-                        population_size=20,
+                        generations=st.session_state.train_gens,      # 使用滑块值
+                        population_size=st.session_state.train_pop,   # 使用滑块值
                         cv=cv_folds,
                         random_state=random_state,
                         verbosity=2,
@@ -707,8 +721,8 @@ def training_page():
                     )
                 else:
                     tpot = TPOTRegressor(
-                        generations=5,
-                        population_size=20,
+                        generations=st.session_state.train_gens,
+                        population_size=st.session_state.train_pop,
                         cv=cv_folds,
                         random_state=random_state,
                         verbosity=2,
@@ -718,7 +732,10 @@ def training_page():
                     )
 
                 tpot.fit(X_train, y_train)
-                print(tpot.score(X_test, y_test))
+                # 将分数显示在界面上
+                score = tpot.score(X_test, y_test)
+                st.write(f"**Test Score:** {score:.4f}")
+
                 st.session_state.model = tpot
                 st.session_state.predictions = tpot.predict(X_test)
                 st.session_state.training_complete = True
@@ -797,8 +814,11 @@ def evaluation_page():
 
     st.markdown("### 🏆 Best Pipeline Found by TPOT")
     if model is not None:
-        st.code(model.fitted_pipeline_, language='python')
+        st.markdown("**Pipeline Object:**")
+        st.write(model.fitted_pipeline_)
+        st.markdown("**Generated Python Code:**")
         pipeline_code = model.export()
+        st.code(pipeline_code, language='python')
         st.download_button("📥 Download Pipeline Code", data=pipeline_code,
                         file_name="best_pipeline.py", mime="text/python")
 
@@ -914,6 +934,7 @@ def export_page():
     with col2:
         st.markdown("#### 📊 Model Report")
         if st.button("Generate Model Report"):
+            fitted_pipeline_str = str(st.session_state.model.fitted_pipeline_)
             report_content = f"""
 # Machine Learning Model Report
 
@@ -928,7 +949,7 @@ def export_page():
 - Features: {len(st.session_state.data.columns) - 1 if st.session_state.data else 'N/A'}
 
 ## Model Information
-- Best Pipeline: {st.session_state.model.fitted_pipeline_ if st.session_state.model else 'N/A'}
+- Best Pipeline: {fitted_pipeline_str}
 - Training Completed: {st.session_state.training_complete}
 
 ## Notes
