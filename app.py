@@ -20,9 +20,22 @@ warnings.filterwarnings('ignore')
 
 from supabase import create_client
 
-from tpot import TPOTClassifier, TPOTRegressor
-
-
+# ---------- TPOT import with fallback ----------
+try:
+    from tpot import TPOTClassifier, TPOTRegressor
+    tpot_available = True
+except ImportError:
+    tpot_available = False
+    # Dummy classes to avoid NameError later
+    class TPOTClassifier:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("TPOT is not installed. Please install it with 'pip install tpot'")
+        def fit(self, *args, **kwargs):
+            pass
+        def predict(self, *args, **kwargs):
+            pass
+    class TPOTRegressor(TPOTClassifier):
+        pass
 
 # ---------- 页面配置 ----------
 st.set_page_config(
@@ -554,6 +567,15 @@ def eda_page():
 
 def training_page():
     st.markdown('<h2 class="sub-header">📐 Automated Model Training with TPOT</h2>', unsafe_allow_html=True)
+    
+    # Check if TPOT is available
+    if not tpot_available:
+        st.error("⚠️ TPOT is not installed. Please install it with `pip install tpot` to use this feature.")
+        if st.button("Go to Data Upload"):
+            st.session_state.app_page = "📁 Data Upload"
+            st.rerun()
+        return
+
     if st.session_state.data is None or st.session_state.target_column is None:
         st.warning("⚠️ Please upload data and set target column first.")
         if st.button("Go to Data Upload"):
