@@ -1,12 +1,11 @@
 import streamlit as st
 import os
 import base64
-import pandas as pd #noqa
+import pandas as pd  # noqa
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-from flaml import AutoML
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.model_selection import train_test_split
@@ -19,7 +18,7 @@ from sklearn.metrics import (
 import warnings
 warnings.filterwarnings('ignore')
 
-from supabase import create_client #noqa
+from supabase import create_client  # noqa
 
 # ---------- FLAML import with fallback ----------
 try:
