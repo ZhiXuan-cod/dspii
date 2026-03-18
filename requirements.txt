@@ -1,7 +1,7 @@
 streamlit
 pandas
 numpy
-supabase
 tpot
-scikit-learn
-setuptools
+supabase
+bcrypt
+openpyxl
