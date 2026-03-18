@@ -193,6 +193,14 @@ st.markdown("""
         transform: scale(1.02) !important;
         box-shadow: 0 4px 12px rgba(33, 150, 243, 0.4) !important;
     }
+    /* 用于登录页面的卡片样式 */
+    .form-card {
+        background: rgba(0,0,0,0.6);
+        padding: 2rem;
+        border-radius: 15px;
+        backdrop-filter: blur(10px);
+        color: white;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -583,10 +591,11 @@ def eda_page():
         fig.update_layout(width=800, height=600)
         st.plotly_chart(fig, use_container_width=True)
 
+    # 改进：使用 np.issubdtype 检测数值类型
     if st.session_state.target_column and st.session_state.target_column in df.columns:
         st.markdown(f"### 🎯 Analysis of Target: {st.session_state.target_column}")
         target_col = st.session_state.target_column
-        if df[target_col].dtype in ['int64', 'float64']:
+        if np.issubdtype(df[target_col].dtype, np.number):
             fig = px.histogram(df, x=target_col, title=f"Distribution of Target ({target_col})")
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -709,10 +718,16 @@ def training_page():
                 X_test.loc[:, cat_cols] = imputer_cat.transform(X_test[cat_cols])
             st.info("Missing values imputed (mean for numerical, mode for categorical).")
 
+        # 将分类列显式转换为 category 类型，有助于 FLAML 正确处理
+        if cat_cols:
+            for col in cat_cols:
+                X_train[col] = X_train[col].astype('category')
+                X_test[col] = X_test[col].astype('category')
+
         st.session_state.imputer_num = imputer_num
         st.session_state.imputer_cat = imputer_cat
         st.session_state.num_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
-        st.session_state.cat_cols = X_train.select_dtypes(include=['object']).columns.tolist()
+        st.session_state.cat_cols = X_train.select_dtypes(include=['category']).columns.tolist()
 
         with st.spinner("🧠 FLAML is searching for the best model. This may take several minutes..."):
             try:
@@ -845,6 +860,7 @@ def prediction_page():
                     st.warning(f"⚠️ Missing columns: {missing_cols}. They will be filled with 0.")
                 new_df = new_df.reindex(columns=original_cols, fill_value=0)
 
+                # 对新数据进行相同的缺失值处理
                 if st.session_state.imputer_num is not None and st.session_state.num_cols:
                     new_df[st.session_state.num_cols] = st.session_state.imputer_num.transform(new_df[st.session_state.num_cols])
                 if st.session_state.imputer_cat is not None and st.session_state.cat_cols:
