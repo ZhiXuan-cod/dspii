@@ -20,12 +20,9 @@ warnings.filterwarnings('ignore')
 
 from supabase import create_client
 
-# ---------- TPOT availability ----------
-try:
-    from tpot import TPOTClassifier, TPOTRegressor
-    tpot_available = True
-except ImportError:
-    tpot_available = False
+from tpot import TPOTClassifier, TPOTRegressor
+
+
 
 # ---------- 页面配置 ----------
 st.set_page_config(
@@ -562,10 +559,6 @@ def training_page():
         if st.button("Go to Data Upload"):
             st.session_state.app_page = "📁 Data Upload"
             st.rerun()
-        return
-    if not tpot_available:
-        st.error("TPOT is not installed. Please install it to use AutoML features.")
-        st.code("pip install tpot", language="bash")
         return
 
     df = st.session_state.data
