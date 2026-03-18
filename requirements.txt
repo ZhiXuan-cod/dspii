@@ -1,13 +1,9 @@
 streamlit
 pandas
 numpy
-tpot
-supabase
-scikit-learn
 matplotlib
 seaborn
-xgboost
-lightgbm
-catboost
-statsmodels
-joblib
+plotly
+scikit-learn
+supabase
+tpot
