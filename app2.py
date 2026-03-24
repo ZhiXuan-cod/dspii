@@ -5,6 +5,7 @@ import hashlib
 import pandas as pd  # noqa
 import numpy as np
 from datetime import datetime
+from typing import List
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
@@ -20,6 +21,91 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from supabase import create_client  # noqa
+
+# ---------- Minimal PDF generator (no extra installs) ----------
+def _pdf_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def text_to_simple_pdf_bytes(text: str, title: str = "ML Model Report") -> bytes:
+    """
+    Create a simple multi-page PDF containing the given plain text.
+    No third-party dependencies (works on Streamlit free tier).
+    """
+    page_w, page_h = 612, 792  # US Letter points
+    margin_x, margin_y = 54, 54
+    font_size = 10
+    leading = 14
+    max_lines = int((page_h - 2 * margin_y) / leading)
+
+    lines = (text or "").splitlines() or ["(empty report)"]
+    pages = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)]
+
+    objects: List[bytes] = []
+
+    def add_obj(obj: bytes) -> int:
+        objects.append(obj)
+        return len(objects)  # 1-based object number
+
+    # 1) Catalog (points to Pages obj #2)
+    catalog_obj_num = add_obj(b"<< /Type /Catalog /Pages 2 0 R >>")
+
+    # Reserve slot for Pages object (#2); fill later
+    add_obj(b"<< /Type /Pages /Kids [] /Count 0 >>")
+
+    page_obj_nums: List[int] = []
+    for page_lines in pages:
+        y0 = page_h - margin_y
+        text_ops = [b"BT", b"/F1 %d Tf" % font_size, b"1 0 0 1 %d %d Tm" % (margin_x, y0)]
+        for i, line in enumerate(page_lines):
+            if i > 0:
+                text_ops.append(b"0 -%d Td" % leading)
+            text_ops.append(b"(%s) Tj" % _pdf_escape(line).encode("utf-8"))
+        text_ops.append(b"ET")
+        stream = b"\n".join(text_ops) + b"\n"
+
+        content_obj_num = add_obj(
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"endstream"
+        )
+
+        page_obj = b"".join(
+            [
+                b"<< /Type /Page /Parent 2 0 R ",
+                (b"/MediaBox [0 0 %d %d] " % (page_w, page_h)),
+                b"/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> ",
+                (b"/Contents %d 0 R >>" % content_obj_num),
+            ]
+        )
+        page_obj_nums.append(add_obj(page_obj))
+
+    kids = b" ".join([b"%d 0 R" % n for n in page_obj_nums])
+    objects[1] = b"<< /Type /Pages /Kids [ %s ] /Count %d >>" % (kids, len(page_obj_nums))
+
+    info_obj_num = add_obj(b"<< /Title (%s) >>" % _pdf_escape(title).encode("utf-8"))
+
+    header = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    body = b""
+    offsets = [0]
+    cur = len(header)
+
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(cur)
+        obj_bytes = b"%d 0 obj\n%s\nendobj\n" % (i, obj)
+        body += obj_bytes
+        cur += len(obj_bytes)
+
+    xref_start = len(header) + len(body)
+    xref = [b"xref\n0 %d\n" % (len(objects) + 1), b"0000000000 65535 f \n"]
+    for off in offsets[1:]:
+        xref.append(b"%010d 00000 n \n" % off)
+    xref_bytes = b"".join(xref)
+
+    trailer = (
+        b"trailer\n<< /Size %d /Root %d 0 R /Info %d 0 R >>\nstartxref\n%d\n%%EOF\n"
+        % (len(objects) + 1, catalog_obj_num, info_obj_num, xref_start)
+    )
+
+    return header + body + xref_bytes + trailer
 
 # ---------- FLAML import with fallback ----------
 try:
@@ -1132,8 +1218,19 @@ def export_page():
 This model was generated using FLAML AutoML through the No-Code ML Platform.
 """
             st.code(report_content, language='markdown')
-            st.download_button("📥 Download Report", data=report_content,
-                            file_name="ml_model_report.md", mime="text/markdown")
+            pdf_bytes = text_to_simple_pdf_bytes(report_content, title="ML Model Report")
+            st.download_button(
+                "📥 Download Report (PDF)",
+                data=pdf_bytes,
+                file_name="ml_model_report.pdf",
+                mime="application/pdf"
+            )
+            st.download_button(
+                "📥 Download Report (Markdown)",
+                data=report_content,
+                file_name="ml_model_report.md",
+                mime="text/markdown"
+            )
 
     st.markdown("### 📋 Session Information")
     session_info = {
