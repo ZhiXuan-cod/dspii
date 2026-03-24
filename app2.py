@@ -1109,117 +1109,15 @@ def evaluation_page():
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             if st.session_state.training_complete:
-                if st.button("➡️ Go to Make Predictions", type="primary", use_container_width=True):
-                    st.session_state.app_page = "🔮 Make Predictions"
+                if st.button("➡️ Go to Export Results", type="primary", use_container_width=True):
+                    st.session_state.app_page = "💾 Export Results"
                     st.rerun()
             else:
-                st.button("➡️ Go to Make Predictions (train model first)", disabled=True, use_container_width=True)
+                st.button("➡️ Go to Export Results (train model first)", disabled=True, use_container_width=True)
 
     except Exception as e:
         st.error(f"评估过程中发生未知错误：{str(e)}")
         st.info("请尝试重新训练模型，或检查数据格式。")
-
-def prediction_page():
-    st.markdown('<h2 class="sub-header">🔮 Make Predictions with Trained Model</h2>', unsafe_allow_html=True)
-    if not st.session_state.training_complete or st.session_state.model is None:
-        st.warning("⚠️ Please train a model first from the 'Model Training' page.")
-        if st.button("Go to Model Training"):
-            st.session_state.app_page = "📐 Model Training"
-            st.rerun()
-        return
-
-    model = st.session_state.model
-    method = st.radio("Select prediction method:",
-                    ["📤 Upload New Data", "✍️ Manual Input", "📊 Use Test Data"])
-
-    if method == "📤 Upload New Data":
-        st.markdown("### 📤 Upload New Data for Prediction")
-        new_file = st.file_uploader("Upload new CSV file for predictions", type=['csv'], key="pred_file")
-        if new_file is not None:
-            try:
-                new_df = pd.read_csv(new_file)
-                original_cols = st.session_state.data.drop(columns=[st.session_state.target_column]).columns.tolist()
-                missing_cols = set(original_cols) - set(new_df.columns)
-                if missing_cols:
-                    st.warning(f"⚠️ Missing columns: {missing_cols}. They will be filled with 0.")
-                new_df = new_df.reindex(columns=original_cols, fill_value=0)
-
-                if st.session_state.imputer_num is not None and st.session_state.num_cols:
-                    new_df[st.session_state.num_cols] = st.session_state.imputer_num.transform(new_df[st.session_state.num_cols])
-                if st.session_state.imputer_cat is not None and st.session_state.cat_cols:
-                    new_df[st.session_state.cat_cols] = st.session_state.imputer_cat.transform(new_df[st.session_state.cat_cols])
-
-                st.markdown("### 📋 Data Preview")
-                st.dataframe(new_df.head(), use_container_width=True)
-
-                if st.button("🔮 Make Predictions", type="primary"):
-                    with st.spinner("Making predictions..."):
-                        preds = model.predict(new_df)
-                        results_df = new_df.copy()
-                        results_df['Predictions'] = preds
-                        st.success(f"✅ Predictions complete for {len(preds)} samples!")
-                        st.dataframe(results_df, use_container_width=True)
-                        csv = results_df.to_csv(index=False)
-                        b64 = base64.b64encode(csv.encode()).decode()
-                        href = f'<a href="data:file/csv;base64,{b64}" download="predictions.csv">📥 Download Predictions</a>'
-                        st.markdown(href, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Error processing file: {str(e)}")
-
-    elif method == "✍️ Manual Input":
-        st.markdown("### ✍️ Enter Values Manually")
-        feature_cols = st.session_state.data.drop(columns=[st.session_state.target_column]).columns.tolist()
-        input_data = {}
-        cols = st.columns(3)
-        for i, col_name in enumerate(feature_cols):
-            with cols[i % 3]:
-                if col_name in st.session_state.num_cols:
-                    min_val = float(st.session_state.data[col_name].min())
-                    max_val = float(st.session_state.data[col_name].max())
-                    mean_val = float(st.session_state.data[col_name].mean())
-                    input_data[col_name] = st.number_input(col_name, min_value=min_val, max_value=max_val, value=mean_val)
-                else:
-                    unique_vals = st.session_state.data[col_name].unique()[:10]
-                    input_data[col_name] = st.selectbox(col_name, unique_vals)
-        if st.button("🔮 Predict", type="primary"):
-            input_df = pd.DataFrame([input_data])
-            if st.session_state.imputer_num is not None and st.session_state.num_cols:
-                input_df[st.session_state.num_cols] = st.session_state.imputer_num.transform(input_df[st.session_state.num_cols])
-            if st.session_state.imputer_cat is not None and st.session_state.cat_cols:
-                input_df[st.session_state.cat_cols] = st.session_state.imputer_cat.transform(input_df[st.session_state.cat_cols])
-            pred = model.predict(input_df)[0]
-            st.markdown(f"""
-            <div class="success-box">
-            <h3>Predicted {st.session_state.target_column}: {pred}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-
-    else:
-        st.markdown("### 📊 Predictions on Test Data")
-        if st.session_state.test_data is not None:
-            X_test = st.session_state.test_data['X_test']
-            y_test = st.session_state.test_data['y_test']
-            preds = model.predict(X_test)
-            comp_df = X_test.copy()
-            comp_df['Actual'] = y_test.values
-            comp_df['Predicted'] = preds
-            st.dataframe(comp_df.head(20), use_container_width=True)
-            csv = comp_df.to_csv(index=False)
-            b64 = base64.b64encode(csv.encode()).decode()
-            href = f'<a href="data:file/csv;base64,{b64}" download="test_predictions.csv">📥 Download Test Predictions</a>'
-            st.markdown(href, unsafe_allow_html=True)
-        else:
-            st.info("No test data available. Please train a model first.")
-
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.session_state.training_complete:
-            if st.button("➡️ Go to Export Results", type="primary", use_container_width=True):
-                st.session_state.app_page = "💾 Export Results"
-                st.rerun()
-        else:
-            st.button("➡️ Go to Export Results (train model first)", disabled=True, use_container_width=True)
 
 def export_page():
     st.markdown('<h2 class="sub-header">💾 Export Model and Results</h2>', unsafe_allow_html=True)
@@ -1239,6 +1137,13 @@ def export_page():
     with col2:
         st.markdown("#### 📊 Model Report")
         if st.button("Generate Model Report"):
+            if st.session_state.data is not None:
+                dataset_shape = st.session_state.data.shape
+                feature_count = len(st.session_state.data.columns) - 1
+            else:
+                dataset_shape = "N/A"
+                feature_count = "N/A"
+
             report_content = f"""
 # Machine Learning Model Report
 
@@ -1249,8 +1154,8 @@ def export_page():
 - Target Column: {st.session_state.target_column}
 
 ## Dataset Information
-- Original Shape: {st.session_state.data.shape if st.session_state.data is not None else 'N/A'}
-- Features: {len(st.session_state.data.columns) - 1 if st.session_state.data is not None else 'N/A'}
+- Original Shape: {dataset_shape}
+- Features: {feature_count}
 
 ## Model Information
 - Best Model: {st.session_state.model.model}
@@ -1324,7 +1229,6 @@ def dashboard_page():
             "🔍 Exploratory Analysis",
             "📐 Model Training",
             "📈 Model Evaluation",
-            "🔮 Make Predictions",
             "💾 Export Results"
         ]
         selected = st.radio("Select a step:", app_page_options, index=app_page_options.index(st.session_state.app_page))
@@ -1339,7 +1243,7 @@ def dashboard_page():
         - Automated EDA
         - AutoML with FLAML
         - Model evaluation
-        - No-code predictions
+        - Export model report
         """)
         if not flaml_available:
             st.error("⚠️ FLAML not installed. Install with: `pip install flaml[automl]`")
@@ -1367,8 +1271,6 @@ def dashboard_page():
         training_page()
     elif st.session_state.app_page == "📈 Model Evaluation":
         evaluation_page()
-    elif st.session_state.app_page == "🔮 Make Predictions":
-        prediction_page()
     elif st.session_state.app_page == "💾 Export Results":
         export_page()
 
