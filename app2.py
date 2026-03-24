@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import base64
+import hashlib
 import pandas as pd  # noqa
 import numpy as np
 from datetime import datetime
@@ -90,6 +91,46 @@ def set_bg_image_local(image_path):
         """
         st.markdown(fallback_bg, unsafe_allow_html=True)
 
+# ---------- Password hashing helpers ----------
+def hash_password(password: str, iterations: int = 100_000) -> str:
+    """Hash password using PBKDF2-HMAC-SHA256."""
+    salt = os.urandom(16)
+    pwd_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return (
+        f"pbkdf2_sha256${iterations}$"
+        f"{base64.b64encode(salt).decode('utf-8')}$"
+        f"{base64.b64encode(pwd_hash).decode('utf-8')}"
+    )
+
+
+def verify_password(plain_password: str, stored_password: str) -> bool:
+    """
+    Verify password and keep backward compatibility.
+    - New format: pbkdf2_sha256$iterations$salt_b64$hash_b64
+    - Legacy format: plain-text password
+    """
+    if not stored_password:
+        return False
+
+    if stored_password.startswith("pbkdf2_sha256$"):
+        try:
+            _, iterations_str, salt_b64, hash_b64 = stored_password.split("$", 3)
+            iterations = int(iterations_str)
+            salt = base64.b64decode(salt_b64.encode("utf-8"))
+            expected_hash = base64.b64decode(hash_b64.encode("utf-8"))
+            candidate_hash = hashlib.pbkdf2_hmac(
+                "sha256",
+                plain_password.encode("utf-8"),
+                salt,
+                iterations,
+            )
+            return candidate_hash == expected_hash
+        except Exception:
+            return False
+
+    # Legacy plain-text fallback (for already-registered users)
+    return stored_password == plain_password
+
 # ---------- 用户数据存储 (Supabase) ----------
 def register_user(email, password, name):
     """注册新用户到 Supabase"""
@@ -99,7 +140,7 @@ def register_user(email, password, name):
         response = st.session_state.supabase.table("users").select("*").eq("email", email).execute()
         if len(response.data) > 0:
             return False, "Email already registered."
-        data = {"email": email, "name": name, "password": password}
+        data = {"email": email, "name": name, "password": hash_password(password)}
         st.session_state.supabase.table("users").insert(data).execute()
         return True, "Registration successful. Please log in."
     except Exception as e:
@@ -114,7 +155,7 @@ def authenticate_user(email, password):
         if len(response.data) == 0:
             return False, None
         user = response.data[0]
-        if user["password"] == password:  # 建议生产环境使用密码哈希
+        if verify_password(password, user.get("password", "")):
             return True, user["name"]
         else:
             return False, None
@@ -570,11 +611,21 @@ def cleaning_page():
                 num_cols = cleaned.select_dtypes(include=[np.number]).columns
                 if outlier_option == "Remove rows with Z-score > 3":
                     from scipy import stats
-                    z_scores = np.abs(stats.zscore(cleaned[num_cols].dropna()))
-                    threshold = 3
-                    outlier_rows = (z_scores > threshold).any(axis=1)
-                    cleaned = cleaned[~outlier_rows]
-                    st.info(f"Removed rows with Z-score > 3, new shape: {cleaned.shape}")
+                    if len(num_cols) == 0:
+                        st.warning("No numerical columns found for outlier removal.")
+                    else:
+                        numeric_subset = cleaned[num_cols].dropna()
+                        if numeric_subset.empty:
+                            st.warning("No complete numerical rows available for Z-score outlier removal.")
+                        else:
+                            z_scores = np.abs(stats.zscore(numeric_subset, nan_policy='omit'))
+                            if np.ndim(z_scores) == 1:
+                                z_scores = z_scores.reshape(-1, 1)
+                            threshold = 3
+                            outlier_rows = (z_scores > threshold).any(axis=1)
+                            outlier_idx = numeric_subset.index[outlier_rows]
+                            cleaned = cleaned.drop(index=outlier_idx)
+                            st.info(f"Removed rows with Z-score > 3, new shape: {cleaned.shape}")
                 elif outlier_option == "Cap at 1st and 99th percentile":
                     for col in num_cols:
                         q1 = cleaned[col].quantile(0.01)
@@ -950,19 +1001,19 @@ def evaluation_page():
         y_test = np.asarray(y_test).ravel()
         predictions = np.asarray(predictions).ravel()
 
-        valid_mask = np.isfinite(y_test) & np.isfinite(predictions)
-        if not np.all(valid_mask):
-            st.warning(f"检测到 {np.sum(~valid_mask)} 个无效值（NaN 或无穷大），已自动移除。")
-            y_test = y_test[valid_mask]
-            predictions = predictions[valid_mask]
-
-        if len(y_test) == 0:
-            st.error("没有有效样本可用于评估。请检查数据或重新训练。")
-            return
-
         if problem_type == "Classification":
             y_test = y_test.astype(str)
             predictions = predictions.astype(str)
+
+            valid_mask = ~pd.isna(y_test) & ~pd.isna(predictions)
+            if not np.all(valid_mask):
+                st.warning(f"Detected {np.sum(~valid_mask)} invalid values and removed them before evaluation.")
+                y_test = y_test[valid_mask]
+                predictions = predictions[valid_mask]
+
+            if len(y_test) == 0:
+                st.error("No valid samples available for evaluation.")
+                return
 
             unique_true = np.unique(y_test)
             unique_pred = np.unique(predictions)
@@ -1004,6 +1055,16 @@ def evaluation_page():
         else:
             y_test = y_test.astype(float)
             predictions = predictions.astype(float)
+
+            valid_mask = np.isfinite(y_test) & np.isfinite(predictions)
+            if not np.all(valid_mask):
+                st.warning(f"Detected {np.sum(~valid_mask)} invalid values and removed them before evaluation.")
+                y_test = y_test[valid_mask]
+                predictions = predictions[valid_mask]
+
+            if len(y_test) == 0:
+                st.error("No valid samples available for evaluation.")
+                return
 
             mae = mean_absolute_error(y_test, predictions)
             mse = mean_squared_error(y_test, predictions)
@@ -1188,8 +1249,8 @@ def export_page():
 - Target Column: {st.session_state.target_column}
 
 ## Dataset Information
-- Original Shape: {st.session_state.data.shape if st.session_state.data else 'N/A'}
-- Features: {len(st.session_state.data.columns) - 1 if st.session_state.data else 'N/A'}
+- Original Shape: {st.session_state.data.shape if st.session_state.data is not None else 'N/A'}
+- Features: {len(st.session_state.data.columns) - 1 if st.session_state.data is not None else 'N/A'}
 
 ## Model Information
 - Best Model: {st.session_state.model.model}
