@@ -10,7 +10,6 @@ import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.model_selection import train_test_split
-from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, LabelEncoder, OneHotEncoder
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
@@ -44,7 +43,7 @@ except ImportError as e:
 st.set_page_config(
     page_title="No-Code ML Platform",
     page_icon="💻",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
@@ -878,24 +877,9 @@ def training_page():
     with col3:
         random_state = st.number_input("Random State", 0, 100, 42)
 
-    handle_missing = st.selectbox("Handle Missing Values", ["auto", "impute", "drop"])
-
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
         X = df.drop(columns=[target_col])
         y = df[target_col]
-
-        # 统一处理缺失值（包括目标变量）
-        if handle_missing == "drop":
-            valid_idx = X.dropna().index.intersection(y.dropna().index)
-            X = X.loc[valid_idx].copy()
-            y = y.loc[valid_idx].copy()
-            st.info(f"Dropped rows with missing values. Remaining: {len(X)} rows.")
-        elif handle_missing in ["auto", "impute"]:
-            if y.isnull().any():
-                valid_idx = y.dropna().index
-                X = X.loc[valid_idx].copy()
-                y = y.loc[valid_idx].copy()
-                st.warning(f"Dropped rows where target is missing. Remaining: {len(X)} rows.")
 
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state
@@ -904,24 +888,8 @@ def training_page():
 
         num_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
         cat_cols = X_train.select_dtypes(include=['object']).columns.tolist()
-        imputer_num = None
-        imputer_cat = None
-
-        if handle_missing in ["auto", "impute"] and X_train.isnull().any().any():
-            X_train = X_train.copy()
-            X_test = X_test.copy()
-            if num_cols:
-                imputer_num = SimpleImputer(strategy='mean')
-                X_train.loc[:, num_cols] = imputer_num.fit_transform(X_train[num_cols])
-                X_test.loc[:, num_cols] = imputer_num.transform(X_test[num_cols])
-            if cat_cols:
-                imputer_cat = SimpleImputer(strategy='most_frequent')
-                X_train.loc[:, cat_cols] = imputer_cat.fit_transform(X_train[cat_cols])
-                X_test.loc[:, cat_cols] = imputer_cat.transform(X_test[cat_cols])
-            st.info("Missing values imputed (mean for numerical, mode for categorical).")
-
-        st.session_state.imputer_num = imputer_num
-        st.session_state.imputer_cat = imputer_cat
+        st.session_state.imputer_num = None
+        st.session_state.imputer_cat = None
         st.session_state.num_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
         st.session_state.cat_cols = X_train.select_dtypes(include=['object']).columns.tolist()
 
@@ -929,6 +897,9 @@ def training_page():
             try:
                 task = 'classification' if problem_type == 'Classification' else 'regression'
                 metric = 'accuracy' if task == 'classification' else 'r2'
+                estimator_list = (
+                    ["lgbm", "rf", "lrl1"] if task == "classification" else ["lgbm", "rf", "lrl2"]
+                )
 
                 automl = AutoML()
                 automl.fit(
@@ -936,8 +907,9 @@ def training_page():
                     task=task,
                     time_budget=time_budget_mins * 60,
                     metric=metric,
-                    eval_method='cv',
+                    eval_method='holdout',
                     split_ratio=0.2,
+                    estimator_list=estimator_list,
                     n_jobs=-1,
                     log_file_name='flaml.log',
                     verbose=0
@@ -962,7 +934,6 @@ def training_page():
                 st.session_state.training_complete = True
 
                 st.success("🎉 Model training completed successfully!")
-                st.balloons()
 
                 # 跳转到 Model Evaluation 的按钮
                 col1, col2, col3 = st.columns([1, 2, 1])
