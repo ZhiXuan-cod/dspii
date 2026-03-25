@@ -733,7 +733,42 @@ def evaluation_page():
     y_test = test_data['y_test']
     problem_type = st.session_state.problem_type
 
+    # ---------- 数据格式清理 ----------
+    # 转换为 numpy 数组并确保是一维
+    y_test = np.asarray(y_test).ravel()
+    predictions = np.asarray(predictions).ravel()
+
+    # 检查并移除 NaN 或无穷大（如果有）
+    valid_mask = np.isfinite(y_test) & np.isfinite(predictions)
+    if not np.all(valid_mask):
+        st.warning(f"检测到 {np.sum(~valid_mask)} 个无效值（NaN 或无穷大），已自动移除。")
+        y_test = y_test[valid_mask]
+        predictions = predictions[valid_mask]
+
+    # 如果移除后没有样本，则报错返回
+    if len(y_test) == 0:
+        st.error("没有有效样本可用于评估。")
+        return
+
+    # 根据问题类型计算指标
     if problem_type == "Classification":
+        # 对于分类问题，确保标签类型一致
+        # 如果一个是字符串，另一个是数值，统一转换为字符串进行比较
+        if y_test.dtype.kind in 'iuf' and predictions.dtype.kind in 'iuf':
+            # 两者都是数值，无需转换
+            pass
+        elif y_test.dtype.kind in 'iuf' and predictions.dtype.kind in 'UO':
+            # y_test 是数值，predictions 是字符串，将 predictions 转换为数值（可能失败）
+            try:
+                predictions = predictions.astype(y_test.dtype)
+            except ValueError:
+                st.error("预测值与真实值类型不兼容（数值 vs 字符串），无法计算指标。")
+                return
+        elif y_test.dtype.kind in 'UO' and predictions.dtype.kind in 'iuf':
+            # y_test 是字符串，predictions 是数值，将 predictions 转换为字符串
+            predictions = predictions.astype(str)
+        # 如果都是字符串，直接使用
+
         acc = accuracy_score(y_test, predictions)
         prec = precision_score(y_test, predictions, average='weighted', zero_division=0)
         rec = recall_score(y_test, predictions, average='weighted', zero_division=0)
@@ -754,10 +789,11 @@ def evaluation_page():
         st.pyplot(fig)
 
         st.markdown("### 📝 Detailed Classification Report")
-        report = classification_report(y_test, predictions, output_dict=True)
+        report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
         report_df = pd.DataFrame(report).transpose()
         st.dataframe(report_df, use_container_width=True)
     else:
+        # 回归问题
         mae = mean_absolute_error(y_test, predictions)
         mse = mean_squared_error(y_test, predictions)
         rmse = np.sqrt(mse)
