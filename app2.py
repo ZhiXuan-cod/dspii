@@ -113,8 +113,8 @@ try:
     flaml_available = True
 except ImportError as e:
     flaml_available = False
-    st.error(f"⚠️ FLAML 导入失败：{e}。请使用 'pip install flaml[automl]' 安装。")
-    # 提供 dummy 类避免 NameError
+    st.error(f"⚠️ FLAML import failed: {e}. Please install with 'pip install flaml[automl]'.")
+    # Provide dummy class to avoid NameError
     class AutoML:
         def __init__(self, **kwargs):
             raise ImportError("FLAML is not installed.")
@@ -125,7 +125,7 @@ except ImportError as e:
         def score(self, X, y):
             return 0.0
 
-# ---------- 页面配置 ----------
+# ---------- Page configuration ----------
 st.set_page_config(
     page_title="No-Code ML Platform",
     page_icon="💻",
@@ -133,7 +133,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ---------- Supabase 客户端 ----------
+# ---------- Supabase client ----------
 if "supabase" not in st.session_state:
     try:
         url = st.secrets["supabase"]["url"]
@@ -143,7 +143,7 @@ if "supabase" not in st.session_state:
         st.error(f"Supabase connection failed: {e}")
         st.session_state.supabase = None
 
-# ---------- 背景图片（Base64嵌入）----------
+# ---------- Background image (Base64 embedding) ----------
 def get_base64_of_file(file_path):
     try:
         with open(file_path, "rb") as f:
@@ -216,9 +216,9 @@ def verify_password(plain_password: str, stored_password: str) -> bool:
     # Legacy plain-text fallback (for already-registered users)
     return stored_password == plain_password
 
-# ---------- 用户数据存储 (Supabase) ----------
+# ---------- User data storage (Supabase) ----------
 def register_user(email, password, name):
-    """注册新用户到 Supabase"""
+    """Register a new user in Supabase"""
     if st.session_state.supabase is None:
         return False, "Supabase not connected"
     try:
@@ -232,7 +232,7 @@ def register_user(email, password, name):
         return False, f"Registration failed: {e}"
 
 def authenticate_user(email, password):
-    """验证用户凭据"""
+    """Authenticate user credentials"""
     if st.session_state.supabase is None:
         return False, None
     try:
@@ -248,7 +248,7 @@ def authenticate_user(email, password):
         st.error(f"Authentication failed: {e}")
         return False, None
 
-# ---------- 页面导航 ----------
+# ---------- Page navigation ----------
 if "page" not in st.session_state:
     st.session_state.page = "front"
 if "logged_in" not in st.session_state:
@@ -259,7 +259,7 @@ if "user_name" not in st.session_state:
 def go_to(page):
     st.session_state.page = page
 
-# ---------- 全局CSS样式（按钮渐变、卡片等）----------
+# ---------- Global CSS styles (gradient buttons, cards, etc.) ----------
 st.markdown("""
 <style>
     .main-header {
@@ -304,7 +304,7 @@ st.markdown("""
         margin: 0.5rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    /* 全局按钮样式：蓝到紫渐变 */
+    /* Global button style: blue to purple gradient */
     div.stButton > button {
         background: linear-gradient(135deg, #2196F3, #9C27B0) !important;
         color: white !important;
@@ -323,7 +323,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- 首页 Front Page ----------
+# ---------- Front page ----------
 def front_page():
     set_bg_image_local("FrontPage.jpg")
 
@@ -394,13 +394,13 @@ def front_page():
             go_to("login")
             st.rerun()
 
-# ---------- 登录/注册页面（居中，无“记住邮箱”功能）----------
+# ---------- Login/Register page (centered, no "remember email") ----------
 def login_page():
     set_bg_image_local("login.jpg")
     
     st.markdown("""
     <style>
-    /* 使内容垂直居中 */
+    /* center content vertically */
     .stApp {
         display: flex;
         align-items: center;
@@ -450,7 +450,7 @@ def login_page():
     </style>
     """, unsafe_allow_html=True)
 
-    # 三列布局，中间列放置表单实现水平居中
+    # Three-column layout, middle column for form to center horizontally
     _, col2, _ = st.columns([1, 2, 1])
     with col2:
         st.markdown('<div class="form-card">', unsafe_allow_html=True)
@@ -500,7 +500,7 @@ def login_page():
         
         st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- 初始化会话状态 ----------
+# ---------- Initialize session state ----------
 if "data" not in st.session_state:
     st.session_state.data = None
 if "target_column" not in st.session_state:
@@ -525,11 +525,11 @@ if "num_cols" not in st.session_state:
     st.session_state.num_cols = None
 if "cat_cols" not in st.session_state:
     st.session_state.cat_cols = None
-# 新增：用于数据清洗预览的临时数据
+# Added: temporary data for data cleaning preview
 if "cleaned_data" not in st.session_state:
     st.session_state.cleaned_data = None
 
-# ---------- 以下为Dashboard子页面 ----------
+# ---------- Dashboard subpages ----------
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     col1, col2 = st.columns([2, 1])
@@ -588,10 +588,10 @@ def upload_page():
                 st.session_state.target_column = target_col
                 st.session_state.problem_type = problem_type
                 st.success(f"✅ Target set: {target_col} ({problem_type})")
-                st.session_state.app_page = "🧹 Data Cleaning"  # 跳转到清洗页面
+                st.session_state.app_page = "🧹 Data Cleaning"  # Jump to cleaning page
                 st.rerun()
 
-    # ---------- 跳转到清洗页面的按钮 ----------
+    # ---------- Button to go to cleaning page ----------
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -602,7 +602,7 @@ def upload_page():
         else:
             st.button("➡️ Go to Data Cleaning (set target first)", disabled=True, use_container_width=True)
 
-# ---------- 新增数据清洗页面 ----------
+# ---------- New data cleaning page ----------
 def cleaning_page():
     st.markdown('<h2 class="sub-header">🧹 Data Cleaning</h2>', unsafe_allow_html=True)
     
@@ -618,56 +618,49 @@ def cleaning_page():
     st.dataframe(original_df.head())
     st.markdown(f"Shape: {original_df.shape}")
 
-    # 清洗选项容器
+    # Cleaning options container
     with st.expander("Cleaning Options", expanded=True):
-        # 1. 删除重复行
+        # 1. Drop duplicate rows
         drop_duplicates = st.checkbox("Drop duplicate rows")
         
-        # 2. 处理缺失值
+        # 2. Handle missing values
         missing_option = st.selectbox(
             "Handle missing values",
             ["None", "Drop rows with any missing", "Drop columns with any missing", 
              "Fill numeric with mean", "Fill numeric with median", "Fill categorical with mode"]
         )
         
-        # 3. 处理异常值（仅数值列）
+        # 3. Handle outliers (numerical columns)
         outlier_option = st.selectbox(
             "Handle outliers (numerical columns)",
             ["None", "Remove rows with Z-score > 3", "Cap at 1st and 99th percentile"]
         )
         
-        # 4. 特征编码
+        # 4. Feature encoding
         encode_option = st.selectbox(
             "Categorical encoding",
             ["None", "Label Encoding", "One-Hot Encoding"]
         )
         
-        # 5. 特征缩放
+        # 5. Feature scaling
         scale_option = st.selectbox(
             "Feature scaling (numerical)",
             ["None", "Standardization (z-score)", "Normalization (min-max)"]
         )
         
-        # 6. 删除列
+        # 6. Drop columns
         cols_to_drop = st.multiselect("Select columns to drop", original_df.columns.tolist())
         
-        # 7. 重命名列
-        rename_input = st.text_area(
-            "Rename columns (format: old_name=new_name, one per line)",
-            height=100,
-            placeholder="e.g., Age=Customer_Age\nIncome=Annual_Income"
-        )
-        
-        # 预览按钮
+        # Preview button
         if st.button("🔍 Preview Cleaning", type="secondary"):
             cleaned = original_df.copy()
             
-            # 1. 删除重复行
+            # 1. Drop duplicate rows
             if drop_duplicates:
                 cleaned = cleaned.drop_duplicates()
                 st.info(f"Dropped duplicates, new shape: {cleaned.shape}")
             
-            # 2. 处理缺失值
+            # 2. Handle missing values
             if missing_option != "None":
                 if missing_option == "Drop rows with any missing":
                     cleaned = cleaned.dropna()
@@ -691,7 +684,7 @@ def cleaning_page():
                         cleaned[col] = cleaned[col].fillna(cleaned[col].mode()[0] if not cleaned[col].mode().empty else "Unknown")
                     st.info("Filled categorical missing values with mode.")
             
-            # 3. 处理异常值
+            # 3. Handle outliers
             if outlier_option != "None":
                 num_cols = cleaned.select_dtypes(include=[np.number]).columns
                 if outlier_option == "Remove rows with Z-score > 3":
@@ -718,7 +711,7 @@ def cleaning_page():
                         cleaned[col] = cleaned[col].clip(lower=q1, upper=q99)
                     st.info("Capped outliers at 1st and 99th percentiles.")
             
-            # 4. 编码
+            # 4. Encoding
             if encode_option != "None":
                 cat_cols = cleaned.select_dtypes(include=['object']).columns
                 if len(cat_cols) > 0:
@@ -731,7 +724,7 @@ def cleaning_page():
                         cleaned = pd.get_dummies(cleaned, columns=cat_cols, drop_first=True)
                         st.info("Applied One-Hot Encoding to categorical columns.")
             
-            # 5. 缩放
+            # 5. Scaling
             if scale_option != "None":
                 num_cols = cleaned.select_dtypes(include=[np.number]).columns
                 if len(num_cols) > 0:
@@ -744,33 +737,19 @@ def cleaning_page():
                         cleaned[num_cols] = scaler.fit_transform(cleaned[num_cols])
                         st.info("Applied Min-Max Normalization to numerical columns.")
             
-            # 6. 删除列
+            # 6. Drop columns
             if cols_to_drop:
                 cleaned = cleaned.drop(columns=cols_to_drop)
                 st.info(f"Dropped selected columns, new shape: {cleaned.shape}")
-            
-            # 7. 重命名列
-            if rename_input.strip():
-                rename_dict = {}
-                for line in rename_input.strip().split('\n'):
-                    if '=' in line:
-                        old, new = line.split('=', 1)
-                        old = old.strip()
-                        new = new.strip()
-                        if old in cleaned.columns:
-                            rename_dict[old] = new
-                if rename_dict:
-                    cleaned = cleaned.rename(columns=rename_dict)
-                    st.info(f"Renamed columns: {rename_dict}")
             
             st.markdown("### Cleaned Data Preview")
             st.dataframe(cleaned.head())
             st.markdown(f"Final shape: {cleaned.shape}")
             
-            # 保存到临时会话状态
+            # Save to temporary session state
             st.session_state.cleaned_data = cleaned
 
-    # 应用清洗并继续
+    # Apply cleaning and continue
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -889,7 +868,7 @@ def eda_page():
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
 
-    # 跳转到 Model Training 的按钮
+    # Button to go to Model Training
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -932,7 +911,7 @@ def training_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # ---------- 初始化会话状态变量（用于绑定滑块）----------
+    # ---------- Initialize session state variables (for sliders) ----------
     if "train_time" not in st.session_state:
         st.session_state.train_time = 10
     if "training_mode" not in st.session_state:
@@ -944,7 +923,7 @@ def training_page():
             "Training Mode Preset",
             ["Fast", "Balanced", "Accurate"],
             index=["Fast", "Balanced", "Accurate"].index(st.session_state.training_mode),
-            help="快速：时间短；精确：时间长"
+            help="Fast: short time; Accurate: longer time"
         )
     if mode != st.session_state.training_mode:
         st.session_state.training_mode = mode
@@ -1001,7 +980,7 @@ def training_page():
                     verbose=0
                 )
 
-                # 清晰展示训练结果
+                # Display training results clearly
                 with st.expander("📊 Training Results (click to expand)", expanded=True):
                     col_res1, col_res2 = st.columns(2)
                     with col_res1:
@@ -1070,7 +1049,7 @@ def evaluation_page():
             unique_true = np.unique(y_test)
             unique_pred = np.unique(predictions)
             if len(unique_true) == 0 or len(unique_pred) == 0:
-                st.error("真实值或预测值中没有任何类别，无法评估。")
+                st.error("No categories in true or predicted values, cannot evaluate.")
                 return
 
             acc = accuracy_score(y_test, predictions)
@@ -1094,7 +1073,7 @@ def evaluation_page():
                 ax.set_title('Confusion Matrix')
                 st.pyplot(fig)
             except Exception as e:
-                st.error(f"混淆矩阵生成失败：{e}")
+                st.error(f"Failed to generate confusion matrix: {e}")
 
             st.markdown("### 📝 Detailed Classification Report")
             try:
@@ -1102,7 +1081,7 @@ def evaluation_page():
                 report_df = pd.DataFrame(report).transpose()
                 st.dataframe(report_df, use_container_width=True)
             except Exception as e:
-                st.error(f"分类报告生成失败：{e}")
+                st.error(f"Failed to generate classification report: {e}")
 
         else:
             y_test = y_test.astype(float)
@@ -1140,7 +1119,7 @@ def evaluation_page():
                                          line=dict(color='red', dash='dash')))
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.error(f"实际vs预测图生成失败：{e}")
+                st.error(f"Failed to generate actual vs predicted plot: {e}")
 
             st.markdown("### 📉 Residual Plot")
             try:
@@ -1150,7 +1129,7 @@ def evaluation_page():
                 fig.add_hline(y=0, line_dash="dash", line_color="red")
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.error(f"残差图生成失败：{e}")
+                st.error(f"Failed to generate residual plot: {e}")
 
         st.markdown("### 🏆 Best Model Found by FLAML")
         if model is not None:
@@ -1168,8 +1147,8 @@ def evaluation_page():
                 st.button("➡️ Go to Export Results (train model first)", disabled=True, use_container_width=True)
 
     except Exception as e:
-        st.error(f"评估过程中发生未知错误：{str(e)}")
-        st.info("请尝试重新训练模型，或检查数据格式。")
+        st.error(f"Unknown error occurred during evaluation: {str(e)}")
+        st.info("Please try retraining the model or check the data format.")
 
 def export_page():
     st.markdown('<h2 class="sub-header">💾 Export Model and Results</h2>', unsafe_allow_html=True)
@@ -1261,7 +1240,7 @@ This model was generated using FLAML AutoML through the No-Code ML Platform.
             st.session_state.app_page = "📁 Data Upload"
             st.rerun()
 
-# ---------- 仪表盘 Dashboard ----------
+# ---------- Dashboard ----------
 def dashboard_page():
     set_bg_image_local("purple.jpg")
     
@@ -1285,11 +1264,11 @@ def dashboard_page():
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/2103/2103832.png", width=100)
         st.markdown("### Sequential Steps")
-        # 更新页面选项，增加数据清洗
+        # Update page options to include data cleaning
         app_page_options = [
             "📁 Data Upload",
             "🧹 Data Cleaning",
-            "🔍 Exploratory Analysis",
+            "🔍 Exploratory Data Analysis",
             "📐 Model Training",
             "📈 Model Evaluation",
             "💾 Export Results"
@@ -1323,12 +1302,12 @@ def dashboard_page():
             go_to("front")
             st.rerun()
 
-    # 主内容区域
+    # Main content area
     if st.session_state.app_page == "📁 Data Upload":
         upload_page()
     elif st.session_state.app_page == "🧹 Data Cleaning":
         cleaning_page()
-    elif st.session_state.app_page == "🔍 Exploratory Analysis":
+    elif st.session_state.app_page == "🔍 Exploratory Data Analysis":
         eda_page()
     elif st.session_state.app_page == "📐 Model Training":
         training_page()
@@ -1337,7 +1316,7 @@ def dashboard_page():
     elif st.session_state.app_page == "💾 Export Results":
         export_page()
 
-# ---------- 主路由 ----------
+# ---------- Main routing ----------
 if st.session_state.page == "front":
     front_page()
 elif st.session_state.page == "login":
