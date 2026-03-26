@@ -121,16 +121,28 @@ try:
 except ImportError:
     flaml_available = False
     st.warning("⚠️ FLAML not installed. Install with 'pip install flaml[automl]' to use auto‑ML.")
-    # Dummy class to avoid NameError
+    # Dummy class to avoid NameError (now includes required attributes)
     class AutoML:
         def __init__(self, **kwargs):
-            raise ImportError("FLAML is not installed.")
-        def fit(self, X, y, **kwargs):
             pass
+        def fit(self, X, y, **kwargs):
+            raise ImportError("FLAML is not installed.")
         def predict(self, X):
             return None
         def score(self, X, y):
             return 0.0
+        @property
+        def model(self):
+            return "No model (FLAML missing)"
+        @property
+        def best_config(self):
+            return {}
+        @property
+        def best_config_per_estimator(self):
+            return {}
+        @property
+        def model_history(self):
+            return []
 
 # ---------- Page configuration ----------
 st.set_page_config(
@@ -1240,7 +1252,144 @@ def evaluation_page():
         st.error(f"Unknown error occurred during evaluation: {str(e)}")
         st.info("Please try retraining the model or check the data format.")
 
-# ---------- Export page (kept as original, but now evaluation page has richer export) ----------
+# ---------- Training page (fixed) ----------
+def training_page():
+    st.markdown('<h2 class="sub-header">📐 Automated Model Training with FLAML</h2>', unsafe_allow_html=True)
+
+    # ---- Check FLAML availability ----
+    if not flaml_available:
+        st.error(
+            "⚠️ FLAML is not installed. Please install it with `pip install flaml[automl]` to use auto‑ML."
+        )
+        if st.button("Go to Data Upload"):
+            st.session_state.app_page = "📁 Data Upload"
+            st.rerun()
+        return
+
+    # ---- Check prerequisites ----
+    if st.session_state.data is None or st.session_state.target_column is None:
+        st.warning("⚠️ Please upload data and set target column first.")
+        if st.button("Go to Data Upload"):
+            st.session_state.app_page = "📁 Data Upload"
+            st.rerun()
+        return
+
+    df = st.session_state.data
+    target_col = st.session_state.target_column
+    problem_type = st.session_state.problem_type
+
+    st.markdown(f"""
+    <div class="card">
+    <h4>Training Configuration</h4>
+    <ul>
+        <li><strong>Problem Type:</strong> {problem_type}</li>
+        <li><strong>Target Column:</strong> {target_col}</li>
+        <li><strong>Dataset Shape:</strong> {df.shape}</li>
+    </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ---- Training mode presets ----
+    if "train_time" not in st.session_state:
+        st.session_state.train_time = 10
+    if "training_mode" not in st.session_state:
+        st.session_state.training_mode = "Balanced"
+
+    col_mode, _ = st.columns([1, 2])
+    with col_mode:
+        mode = st.selectbox(
+            "Training Mode Preset",
+            ["Fast", "Balanced", "Accurate"],
+            index=["Fast", "Balanced", "Accurate"].index(st.session_state.training_mode),
+            help="Fast: short time; Accurate: longer time"
+        )
+    if mode != st.session_state.training_mode:
+        st.session_state.training_mode = mode
+        if mode == "Fast":
+            st.session_state.train_time = 2
+        elif mode == "Balanced":
+            st.session_state.train_time = 10
+        else:  # Accurate
+            st.session_state.train_time = 30
+
+    # ---- User controls ----
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        test_size = st.slider("Test Size (%)", 10, 40, 20) / 100
+    with col2:
+        time_budget_mins = st.slider(
+            "Time Budget (minutes)", 1, 60, value=st.session_state.train_time, key="train_time"
+        )
+    with col3:
+        random_state = st.number_input("Random State", 0, 100, 42)
+
+    # ---- Train button ----
+    if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
+        # Prepare data
+        X = df.drop(columns=[target_col])
+        y = df[target_col]
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+        st.session_state.test_data = {'X_test': X_test, 'y_test': y_test}
+
+        with st.spinner("🧠 FLAML is searching for the best model. This may take several minutes..."):
+            try:
+                task = 'classification' if problem_type == 'Classification' else 'regression'
+                metric = 'accuracy' if task == 'classification' else 'r2'
+                estimator_list = (
+                    ["lgbm", "rf", "lrl1"] if task == "classification" else ["lgbm", "rf", "lrl2"]
+                )
+
+                automl = AutoML()
+                automl.fit(
+                    X_train, y_train,
+                    task=task,
+                    time_budget=time_budget_mins * 60,
+                    metric=metric,
+                    eval_method='holdout',
+                    split_ratio=0.2,
+                    estimator_list=estimator_list,
+                    n_jobs=-1,
+                    log_file_name='flaml.log',
+                    verbose=0
+                )
+
+                # Save the trained model and predictions
+                y_pred = automl.predict(X_test)
+                score = automl.score(X_test, y_test)
+
+                # Store in session state
+                st.session_state.model = automl
+                st.session_state.predictions = y_pred
+                st.session_state.training_complete = True
+
+                # Show results in an expander (safe now because automl is valid)
+                with st.expander("📊 Training Results (click to expand)", expanded=True):
+                    col_res1, col_res2 = st.columns(2)
+                    with col_res1:
+                        st.markdown("#### 🏆 Best Model")
+                        # Safe: automl.model exists after successful fit
+                        st.code(str(automl.model), language='python')
+                    with col_res2:
+                        st.markdown("#### ⚙️ Best Hyperparameters")
+                        # Safe: automl.best_config exists after successful fit
+                        st.json(automl.best_config)
+
+                    st.markdown(f"#### 📈 Test Score ({metric}): **{score:.4f}**")
+
+                st.success("🎉 Model training completed successfully!")
+                st.session_state.app_page = "📈 Model Evaluation"
+                st.rerun()
+
+            except Exception as e:
+                # Show the exact error to help debugging (remove in production if needed)
+                st.error(f"❌ Training failed: {type(e).__name__}: {str(e)}")
+                # Also log it (optional)
+                print(f"Training error: {type(e).__name__}: {e}")
+
+# ---------- Export page (unchanged) ----------
 def export_page():
     st.markdown('<h2 class="sub-header">💾 Export Model and Results</h2>', unsafe_allow_html=True)
     if not st.session_state.training_complete:
