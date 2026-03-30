@@ -294,6 +294,22 @@ st.markdown("""
 # ---------- Front page ----------
 def front_page():
     set_bg_image_local("FrontPage.jpg")
+    # Force all text on the front page to be white
+    st.markdown("""
+    <style>
+        .stApp {
+            color: white !important;
+        }
+        .stApp * {
+            color: white !important;
+        }
+        /* Ensure button text remains white (already white, but just in case) */
+        div.stButton > button {
+            color: white !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("""
     <style>
     .right-panel {
