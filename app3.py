@@ -5,18 +5,14 @@ import hashlib
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from typing import List, Optional, Tuple
-import matplotlib.pyplot as plt
-import seaborn as sns
+from typing import List
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, LabelEncoder
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, classification_report,
-    mean_absolute_error, mean_squared_error, r2_score,
-    roc_curve, auc, precision_recall_curve
+    mean_absolute_error, mean_squared_error, r2_score
 )
 import warnings
 warnings.filterwarnings('ignore')
@@ -26,7 +22,7 @@ from supabase import create_client
 
 # ---------- PyCaret imports ----------
 try:
-    from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, get_config, pull, save_model as pycaret_save_model
+    from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, get_config, pull
     from pycaret.regression import setup as reg_setup, compare_models as reg_compare, predict_model as reg_predict
     PYCARET_AVAILABLE = True
 except ImportError:
@@ -318,10 +314,9 @@ if "cleaned_data" not in st.session_state:
 if "label_encoder" not in st.session_state:
     st.session_state.label_encoder = None
 
-# ---------- Helper function for cleaning (now protects target column) ----------
+# ---------- Helper function for cleaning (protects target column) ----------
 def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
                    encode_option, scale_option, cols_to_drop, target_col):
-    """Apply cleaning operations while preserving the target column."""
     cleaned = df.copy()
 
     if drop_duplicates:
@@ -332,13 +327,11 @@ def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
         if missing_option == "Drop rows with any missing":
             cleaned = cleaned.dropna()
         elif missing_option == "Drop columns with any missing":
-            # FIX: Only drop columns that have missing values AND are not the target column
             cols_with_na = cleaned.columns[cleaned.isnull().any()].tolist()
             cols_to_drop_na = [c for c in cols_with_na if c != target_col]
             cleaned = cleaned.drop(columns=cols_to_drop_na, errors='ignore')
         elif missing_option == "Fill numeric with mean":
             num_cols = cleaned.select_dtypes(include=[np.number]).columns
-            # Exclude target column if it is numeric
             for col in num_cols:
                 if col != target_col:
                     cleaned[col] = cleaned[col].fillna(cleaned[col].mean())
@@ -353,10 +346,10 @@ def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
                 if col != target_col:
                     cleaned[col] = cleaned[col].fillna(cleaned[col].mode()[0] if not cleaned[col].mode().empty else "Unknown")
 
-    # Outlier handling (only on numeric features, not target)
+    # Outlier handling
     if outlier_option != "None" and SCIPY_AVAILABLE:
         num_cols = cleaned.select_dtypes(include=[np.number]).columns
-        num_cols = [c for c in num_cols if c != target_col]  # exclude target
+        num_cols = [c for c in num_cols if c != target_col]
         if outlier_option == "Remove rows with Z-score > 3":
             if len(num_cols) > 0:
                 numeric_subset = cleaned[num_cols].dropna()
@@ -375,7 +368,7 @@ def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
     elif outlier_option != "None" and not SCIPY_AVAILABLE:
         st.warning("Scipy not installed. Z‑score outlier detection disabled. Use 'Cap' option instead.")
 
-    # Categorical encoding (skip target column)
+    # Categorical encoding (skip target)
     if encode_option != "None":
         cat_cols = cleaned.select_dtypes(include=['object']).columns
         cat_cols = [c for c in cat_cols if c != target_col]
@@ -387,7 +380,7 @@ def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
             elif encode_option == "One-Hot Encoding":
                 cleaned = pd.get_dummies(cleaned, columns=cat_cols, drop_first=True)
 
-    # Feature scaling (skip target column)
+    # Feature scaling (skip target)
     if scale_option != "None":
         num_cols = cleaned.select_dtypes(include=[np.number]).columns
         num_cols = [c for c in num_cols if c != target_col]
@@ -399,7 +392,7 @@ def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
                 scaler = MinMaxScaler()
                 cleaned[num_cols] = scaler.fit_transform(cleaned[num_cols])
 
-    # Drop selected columns (target column is already excluded in UI)
+    # Drop selected columns
     if cols_to_drop:
         cleaned = cleaned.drop(columns=cols_to_drop, errors='ignore')
 
@@ -429,24 +422,6 @@ def _pycaret_setup_safe(setup_fn, **kwargs):
                 kwargs.pop(bad, None)
                 return _pycaret_setup_safe(setup_fn, **kwargs)
         raise
-
-# ---------- Report generation ----------
-def generate_report_text(problem_type, metrics, model, target_col, dataset_shape=None):
-    lines = []
-    lines.append("# Machine Learning Model Evaluation Report")
-    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"Problem Type: {problem_type}")
-    lines.append(f"Target Column: {target_col}")
-    if dataset_shape:
-        lines.append(f"Dataset Shape: {dataset_shape}")
-    lines.append("")
-    lines.append("## Performance Summary")
-    for key, val in metrics.items():
-        lines.append(f"- {key}: {val:.4f}" if isinstance(val, float) else f"- {key}: {val}")
-    lines.append("")
-    lines.append("## Best Model")
-    lines.append(str(model))
-    return "\n".join(lines)
 
 # ---------- Dashboard subpages ----------
 def front_page():
@@ -698,7 +673,7 @@ def upload_page():
         else:
             st.button("➡️ Go to Data Cleaning (set target first)", disabled=True, use_container_width=True)
 
-# ---------- Cleaning page (passes target column to apply_cleaning) ----------
+# ---------- Cleaning page ----------
 def cleaning_page():
     st.markdown('<h2 class="sub-header">🧹 Data Cleaning</h2>', unsafe_allow_html=True)
 
@@ -738,7 +713,6 @@ def cleaning_page():
         cols_to_drop = st.multiselect("Select columns to drop",
                                       [c for c in original_df.columns if c != target_col])
 
-        # Warn user about encoding the target column
         if encode_option != "None" and target_col in original_df.select_dtypes(include=['object']).columns:
             st.warning(f"⚠️ The target column '{target_col}' is categorical. Encoding will be skipped for the target column automatically.")
 
@@ -765,7 +739,7 @@ def cleaning_page():
         else:
             st.button("✅ Apply Cleaning (preview first)", disabled=True, use_container_width=True)
 
-# ---------- EDA page (unchanged) ----------
+# ---------- EDA page ----------
 def eda_page():
     st.markdown('<h2 class="sub-header">🔍 Exploratory Data Analysis</h2>', unsafe_allow_html=True)
     if st.session_state.data is None:
@@ -881,7 +855,7 @@ def eda_page():
         else:
             st.button("➡️ Go to Model Training (set target first)", disabled=True, use_container_width=True)
 
-# ---------- Training page (added data validation) ----------
+# ---------- Training page ----------
 def training_page():
     st.markdown('<h2 class="sub-header">📐 Automated Model Training with PyCaret</h2>', unsafe_allow_html=True)
 
@@ -913,14 +887,13 @@ def training_page():
         return
 
     if problem_type == "Classification":
+        # Do NOT convert target to string; let PyCaret handle encoding
         if df[target_col].dtype in ['float64', 'int64']:
             unique_vals = df[target_col].nunique()
             if unique_vals > 20:
                 st.warning(f"Target column '{target_col}' has {unique_vals} unique numeric values. "
                            "If this is a classification problem with many categories, training may be slow or inaccurate. "
                            "Consider converting to categorical or using regression.")
-        else:
-            df[target_col] = df[target_col].astype(str)   # ensure string labels
     elif problem_type == "Regression":
         if not pd.api.types.is_numeric_dtype(df[target_col]):
             st.error(f"Target column '{target_col}' is not numeric. Regression requires a numeric target.")
@@ -936,7 +909,7 @@ def training_page():
         if np.isinf(df[col]).any():
             st.warning(f"Feature column '{col}' contains infinite values. They may cause training errors. Consider cleaning them.")
 
-    # Optional: display current columns for debugging (can be removed later)
+    # Optional debug info
     with st.expander("Debug: Current Columns"):
         st.write("DataFrame columns:", df.columns.tolist())
         st.write("Target column:", target_col)
@@ -944,6 +917,10 @@ def training_page():
 
     if problem_type == "Classification" and df[target_col].nunique() > 20:
         st.warning(f"Target column has {df[target_col].nunique()} unique values. Classification may be slow or have low accuracy. Consider regression or reduce categories.")
+
+    # Check dataset size
+    if len(df) < 20:
+        st.warning("⚠️ Dataset has very few rows (<20). Model may not generalize well.")
 
     st.markdown(f"""
     <div class="card">
@@ -956,8 +933,6 @@ def training_page():
     </div>
     """, unsafe_allow_html=True)
 
-    if "train_time" not in st.session_state:
-        st.session_state.train_time = 10
     if "training_mode" not in st.session_state:
         st.session_state.training_mode = "Balanced"
 
@@ -997,7 +972,7 @@ def training_page():
 
     sample_frac = st.slider("Sample fraction (optional, for speed)", 0.1, 1.0, 1.0, 0.05)
     if sample_frac < 1.0:
-        df = df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)  # reset index
+        df = df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)
         st.info(f"Using {len(df)} rows after sampling (original: {st.session_state.data.shape[0]}).")
 
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
@@ -1069,7 +1044,6 @@ def training_page():
                     st.code(str(best_model), language='python')
                     if hasattr(best_model, 'feature_importances_'):
                         st.markdown("#### 🔍 Feature Importance (top 10)")
-                        # Safely get feature names from the model if possible
                         if hasattr(best_model, 'feature_names_in_'):
                             feature_names = best_model.feature_names_in_
                         elif isinstance(X_test, pd.DataFrame):
@@ -1092,7 +1066,7 @@ def training_page():
                 st.error(f"❌ Training failed: {type(e).__name__}: {str(e)}")
                 print(f"Training error: {type(e).__name__}: {e}")
 
-# ---------- Evaluation page (unchanged except minor safety) ----------
+# ---------- Evaluation page ----------
 def evaluation_page():
     st.markdown('<h2 class="sub-header">📈 Model Performance Evaluation</h2>', unsafe_allow_html=True)
 
@@ -1131,12 +1105,10 @@ def evaluation_page():
             try:
                 if hasattr(model, 'feature_importances_'):
                     st.markdown("#### Feature Importance (all)")
-                    # Try to get feature names from model if possible
                     if hasattr(model, 'feature_names_in_'):
                         feat_names = model.feature_names_in_
                     else:
                         feat_names = feature_names
-                    # Ensure lengths match
                     if len(feat_names) == len(model.feature_importances_):
                         imp_df = pd.DataFrame({'feature': feat_names, 'importance': model.feature_importances_})
                         imp_df = imp_df.sort_values('importance', ascending=False)
@@ -1158,20 +1130,54 @@ def evaluation_page():
             except Exception as e:
                 st.warning(f"Feature importance display failed: {e}")
 
-        # Continue with evaluation metrics
         if problem_type == "Classification":
             st.markdown("### Classification Metrics")
-            # Ensure classification labels are strings for metrics
-            y_test_str = y_test.astype(str)
-            pred_str = predictions.astype(str)
+
+            # --- Handle label mapping if needed ---
+            # PyCaret internally encodes string labels as integers 0..n-1
+            # We need to map predictions back to original labels for metrics
+            y_test_original = y_test
+            pred_original = predictions
+
+            # If y_test is string but predictions are integers, map integers to strings
+            if y_test.dtype.kind in 'SU' and predictions.dtype.kind in 'iu':
+                unique_true = np.unique(y_test)
+                # PyCaret uses the same order as np.unique for encoding
+                # map integer to string using that order
+                mapping = {i: val for i, val in enumerate(unique_true)}
+                pred_original = np.array([mapping[int(p)] for p in predictions])
+                st.info("Mapped integer predictions to original string labels.")
+            # If both are strings but different sets (should not happen), try to align
+            elif y_test.dtype.kind in 'SU' and predictions.dtype.kind in 'SU':
+                # both strings, ensure same set
+                unique_true = np.unique(y_test)
+                unique_pred = np.unique(predictions)
+                if set(unique_true) != set(unique_pred):
+                    st.warning(f"Predicted labels ({unique_pred}) do not match true labels ({unique_true}). Metrics may be invalid.")
+            # If both are integers, leave as is (likely already numeric classes)
+            elif y_test.dtype.kind in 'iu' and predictions.dtype.kind in 'iu':
+                # nothing to do
+                pass
+            else:
+                # Fallback: convert both to string
+                y_test_original = y_test.astype(str)
+                pred_original = predictions.astype(str)
+
+            y_test_str = y_test_original.astype(str)
+            pred_str = pred_original.astype(str)
+
+            with st.expander("Debug: Labels"):
+                st.write("True labels unique:", np.unique(y_test_str))
+                st.write("Pred labels unique:", np.unique(pred_str))
 
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Accuracy", f"{accuracy_score(y_test_str, pred_str):.4f}")
-                st.metric("Precision", f"{precision_score(y_test_str, pred_str, average='weighted'):.4f}")
-                st.metric("Recall", f"{recall_score(y_test_str, pred_str, average='weighted'):.4f}")
+                acc = accuracy_score(y_test_str, pred_str)
+                st.metric("Accuracy", f"{acc:.4f}")
+                st.metric("Precision", f"{precision_score(y_test_str, pred_str, average='weighted', zero_division=0):.4f}")
+                st.metric("Recall", f"{recall_score(y_test_str, pred_str, average='weighted', zero_division=0):.4f}")
             with col2:
-                st.metric("F1 Score", f"{f1_score(y_test_str, pred_str, average='weighted'):.4f}")
+                st.metric("F1 Score", f"{f1_score(y_test_str, pred_str, average='weighted', zero_division=0):.4f}")
 
             # Confusion matrix
             cm = confusion_matrix(y_test_str, pred_str)
@@ -1181,7 +1187,7 @@ def evaluation_page():
             st.plotly_chart(fig, use_container_width=True)
 
             # Classification report
-            report = classification_report(y_test_str, pred_str, output_dict=True)
+            report = classification_report(y_test_str, pred_str, output_dict=True, zero_division=0)
             report_df = pd.DataFrame(report).transpose()
             st.dataframe(report_df, use_container_width=True)
 
@@ -1193,7 +1199,13 @@ def evaluation_page():
                 st.metric("MAE", f"{mean_absolute_error(y_test, predictions):.4f}")
             with col2:
                 st.metric("RMSE", f"{np.sqrt(mean_squared_error(y_test, predictions)):.4f}")
-                st.metric("MAPE (%)", f"{np.mean(np.abs((y_test - predictions) / y_test)) * 100:.2f}")
+                # MAPE with protection against zero actual values
+                mask = y_test != 0
+                if mask.any():
+                    mape = np.mean(np.abs((y_test[mask] - predictions[mask]) / y_test[mask])) * 100
+                    st.metric("MAPE (%)", f"{mape:.2f}")
+                else:
+                    st.metric("MAPE (%)", "N/A (zero values present)")
 
             # Residuals plot
             residuals = y_test - predictions
@@ -1216,9 +1228,9 @@ def evaluation_page():
         st.error(f"Unknown error occurred during evaluation: {str(e)}")
         st.info("Please try retraining the model or check the data format.")
 
-# ---------- Export page (added pickle import) ----------
+# ---------- Export page ----------
 def export_page():
-    import pickle  # Added missing import
+    import pickle
     st.markdown('<h2 class="sub-header">💾 Export Model and Results</h2>', unsafe_allow_html=True)
     if not st.session_state.training_complete:
         st.warning("⚠️ Please train a model first to export results.")
@@ -1316,9 +1328,9 @@ This model was generated using PyCaret AutoML through the No-Code ML Platform.
             st.session_state.app_page = "📁 Data Upload"
             st.rerun()
 
-# ---------- Dashboard (changed background to purple.png) ----------
+# ---------- Dashboard ----------
 def dashboard_page():
-    set_bg_image_local("purple.png")  # Changed from purple.jpg to purple.png
+    set_bg_image_local("purple.png")
 
     st.markdown("""
     <style>
