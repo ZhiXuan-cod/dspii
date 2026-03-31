@@ -1,9 +1,3 @@
-"""
-No-Code ML Platform
-Complete Streamlit application with Supabase authentication,
-data cleaning, EDA, PyCaret AutoML, and evaluation.
-"""
-
 import streamlit as st
 import os
 import base64
@@ -30,6 +24,7 @@ warnings.filterwarnings('ignore')
 from supabase import create_client
 import scipy.stats as stats  # for outlier detection
 import pickle  # for model serialization
+import inspect
 
 # ---------- PyCaret imports ----------
 try:
@@ -39,6 +34,34 @@ try:
 except ImportError:
     PYCARET_AVAILABLE = False
     st.warning("⚠️ PyCaret not installed. Install with 'pip install pycaret' to use AutoML.")
+
+def _pycaret_setup_safe(setup_fn, **kwargs):
+    """
+    Call PyCaret setup() with only supported kwargs.
+    PyCaret's setup() signature differs across versions; filtering prevents runtime TypeError.
+    """
+    try:
+        params = set(inspect.signature(setup_fn).parameters.keys())
+    except Exception:
+        params = set()
+
+    if params:
+        filtered = {k: v for k, v in kwargs.items() if k in params}
+        return setup_fn(**filtered)
+
+    # Fallback: best-effort, then progressively drop unknown keys if needed.
+    try:
+        return setup_fn(**kwargs)
+    except TypeError as e:
+        msg = str(e)
+        if "unexpected keyword argument" in msg:
+            import re
+            m = re.search(r"unexpected keyword argument '([^']+)'", msg)
+            if m:
+                bad = m.group(1)
+                kwargs.pop(bad, None)
+                return _pycaret_setup_safe(setup_fn, **kwargs)
+        raise
 
 # ---------- Minimal PDF generator (no extra installs) ----------
 def _pdf_escape(text: str) -> str:
@@ -899,7 +922,8 @@ def training_page():
         with st.spinner(f"🧠 PyCaret is training {len(allowed_models)} models with {fold}-fold CV. This may take a few minutes..."):
             try:
                 if problem_type == "Classification":
-                    clf_setup(
+                    _pycaret_setup_safe(
+                        clf_setup,
                         data=df,
                         target=target_col,
                         train_size=1 - test_size,
@@ -919,7 +943,8 @@ def training_page():
                         sort='Accuracy'
                     )
                 else:
-                    reg_setup(
+                    _pycaret_setup_safe(
+                        reg_setup,
                         data=df,
                         target=target_col,
                         train_size=1 - test_size,
@@ -1046,8 +1071,7 @@ def evaluation_page():
                     else:
                         imp_df = pd.DataFrame({'feature': feature_names, 'coefficient': coef})
                         imp_df = imp_df.sort_values('coefficient', ascending=False)
-                        st.markdown("#### Coefficients (Top 20)")
-                    st.dataframe(imp_df.head(20), use_container_width=True)
+                    st.dataframe(imp_df, use_container_width=True)
                 else:
                     st.info("This model does not support feature importance display.")
             except Exception as e:
@@ -1305,24 +1329,6 @@ def evaluation_page():
         st.markdown("### 🏆 Best Model Found by PyCaret")
         if model is not None:
             st.code(str(model), language='python')
-            try:
-                if hasattr(model, 'feature_importances_'):
-                    st.markdown("#### Feature Importance (Top 20)")
-                    imp_df = pd.DataFrame({'feature': feature_names, 'importance': model.feature_importances_})
-                    imp_df = imp_df.sort_values('importance', ascending=False).head(20)
-                    fig_imp = px.bar(imp_df, x='importance', y='feature', orientation='h', title='Feature Importance')
-                    st.plotly_chart(fig_imp, use_container_width=True)
-                elif hasattr(model, 'coef_'):
-                    coef = model.coef_
-                    if coef.ndim == 2:
-                        imp_df = pd.DataFrame({'feature': feature_names, 'importance': np.abs(coef).mean(axis=0)})
-                    else:
-                        imp_df = pd.DataFrame({'feature': feature_names, 'coefficient': coef})
-                    imp_df = imp_df.sort_values('importance', ascending=False).head(20)
-                    fig_imp = px.bar(imp_df, x='importance', y='feature', orientation='h', title='Feature Coefficients')
-                    st.plotly_chart(fig_imp, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Could not plot feature importance: {e}")
 
         st.markdown("---")
         _, col2, _ = st.columns([1, 2, 1])
