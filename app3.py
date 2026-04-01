@@ -882,10 +882,20 @@ def training_page():
         st.error(f"Target column '{target_col}' contains missing values. Please handle them in Data Cleaning.")
         return
 
-    if problem_type == "Regression" and np.isinf(df[target_col]).any():
-        st.error("Target column contains infinite values. Please remove or replace them.")
-        return
+    # Validate target column for regression
+    if problem_type == "Regression":
+        if not pd.api.types.is_numeric_dtype(df[target_col]):
+            st.error(
+                f"❌ Target column '{target_col}' must be numeric for regression. "
+                f"Current type: {df[target_col].dtype}. "
+                "Please select a numeric column or change the problem type to Classification."
+            )
+            return
+        if np.isinf(df[target_col]).any():
+            st.error("❌ Target column contains infinite values. Please remove or replace them.")
+            return
 
+    # Warn about infinite values in numeric features
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     for col in numeric_cols:
         if np.isinf(df[col]).any():
