@@ -857,7 +857,7 @@ def eda_page():
         else:
             st.button("➡️ Go to Model Training (set target first)", disabled=True, use_container_width=True)
 
-# ---------- Training page (updated) ----------
+# ---------- Training page (updated with fix for np.isinf) ----------
 def training_page():
     st.markdown('<h2 class="sub-header">📐 Automated Model Training with PyCaret</h2>', unsafe_allow_html=True)
 
@@ -888,8 +888,8 @@ def training_page():
         st.error(f"Target column '{target_col}' contains missing values. Please handle them in Data Cleaning.")
         return
 
-    # Check for infinite values
-    if np.isinf(df[target_col]).any():
+    # Check for infinite values (only for regression and numeric target)
+    if problem_type == "Regression" and np.isinf(df[target_col]).any():
         st.error("Target column contains infinite values. Please remove or replace them.")
         return
 
