@@ -604,7 +604,7 @@ def login_page():
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Upload page ----------
+# ---------- Upload page (with target candidate detection) ----------
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     col1, col2 = st.columns([2, 1])
@@ -639,8 +639,44 @@ def upload_page():
                         'Unique Values': df.nunique()
                     })
                     st.dataframe(col_types, use_container_width=True)
+
+                # --- Auto‑detect target candidates ---
+                classification_candidates = []
+                regression_candidates = []
+
+                for col in df.columns:
+                    dtype = df[col].dtype
+                    unique_vals = df[col].nunique(dropna=False)
+                    if dtype in ['object', 'category']:
+                        classification_candidates.append(col)
+                    elif np.issubdtype(dtype, np.number):
+                        # Numeric columns with few unique values are often categorical
+                        if unique_vals < 20:
+                            classification_candidates.append(col)
+                        else:
+                            regression_candidates.append(col)
+                    # Ignore other types (e.g., datetime)
+
+                st.markdown("### 🎯 Detected Target Candidates")
+                with st.expander("Click to see possible target columns (for reference)", expanded=False):
+                    col1a, col2a = st.columns(2)
+                    with col1a:
+                        st.markdown("**Classification Targets**")
+                        if classification_candidates:
+                            st.write(", ".join(classification_candidates))
+                        else:
+                            st.write("None detected")
+                    with col2a:
+                        st.markdown("**Regression Targets**")
+                        if regression_candidates:
+                            st.write(", ".join(regression_candidates))
+                        else:
+                            st.write("None detected")
+                st.markdown("---")
+
             except Exception as e:
                 st.error(f"Error loading file: {str(e)}")
+
     with col2:
         st.markdown("""
         <div class="warning-box">
@@ -1232,44 +1268,6 @@ def export_page():
             st.session_state.app_page = "📐 Model Training"
             st.rerun()
         return
-
-    # --- Auto‑detect target candidates ---
-    if st.session_state.data is not None:
-        df = st.session_state.data
-        classification_candidates = []
-        regression_candidates = []
-
-        for col in df.columns:
-            if col == st.session_state.target_column:
-                continue  # skip the already selected target
-            dtype = df[col].dtype
-            unique_vals = df[col].nunique(dropna=False)
-            if dtype in ['object', 'category']:
-                classification_candidates.append(col)
-            elif np.issubdtype(dtype, np.number):
-                # Numeric columns with few unique values are often categorical
-                if unique_vals < 20:
-                    classification_candidates.append(col)
-                else:
-                    regression_candidates.append(col)
-            # Ignore other types (e.g., datetime)
-
-        st.markdown("### 🎯 Detected Target Candidates")
-        with st.expander("Click to see possible target columns (for reference)", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Classification Targets**")
-                if classification_candidates:
-                    st.write(", ".join(classification_candidates))
-                else:
-                    st.write("None detected")
-            with col2:
-                st.markdown("**Regression Targets**")
-                if regression_candidates:
-                    st.write(", ".join(regression_candidates))
-                else:
-                    st.write("None detected")
-        st.markdown("---")
 
     # --- Export options ---
     col1, col2 = st.columns(2)
