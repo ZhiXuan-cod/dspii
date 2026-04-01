@@ -314,6 +314,8 @@ if "cleaned_data" not in st.session_state:
     st.session_state.cleaned_data = None
 if "label_encoder" not in st.session_state:
     st.session_state.label_encoder = None
+if "feature_names" not in st.session_state:
+    st.session_state.feature_names = None
 
 # ---------- Helper function for cleaning (protects target column) ----------
 def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
@@ -953,45 +955,38 @@ def training_page():
 
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True):
         with st.spinner(f"🧠 PyCaret is training {len(allowed_models)} models with {fold}-fold CV..."):
-            try:
-                # ---------- Use PyCaret internal split, no manual split ----------
-                if problem_type == "Classification":
-                    _pycaret_setup_safe(
-                        clf_setup,
-                        data=df,
-                        target=target_col,
-                        train_size=1 - test_size,
-                        session_id=random_state,
-                        fold=fold,
-                        n_jobs=1,
-                        html=False,
-                        verbose=False,
-                        preprocess=True,
-                        ignore_low_variance=False,
-                        remove_multicollinearity=False,
-                        log_experiment=False,
-                        stratify=True if problem_type == "Classification" and df[target_col].dtype == 'object' else None
-                    )
-                else:
-                    _pycaret_setup_safe(
-                        reg_setup,
-                        data=df,
-                        target=target_col,
-                        train_size=1 - test_size,
-                        session_id=random_state,
-                        fold=fold,
-                        n_jobs=1,
-                        html=False,
-                        verbose=False,
-                        preprocess=True,
-                        ignore_low_variance=False,
-                        remove_multicollinearity=False,
-                        log_experiment=False
-                    )
+            # Show a toast (optional)
+            st.toast("Training started...")
 
-                # Verify setup succeeded
+            try:
+                # ---------- Prepare setup arguments ----------
+                setup_args = {
+                    "data": df,
+                    "target": target_col,
+                    "train_size": 1 - test_size,
+                    "session_id": random_state,
+                    "fold": fold,
+                    "n_jobs": 1,
+                    "html": False,
+                    "verbose": False,
+                    "preprocess": True,
+                    "ignore_low_variance": False,
+                    "remove_multicollinearity": False,
+                    "log_experiment": False,
+                }
+
+                if problem_type == "Classification":
+                    # Recommended PyCaret 3.x parameter for stratified splitting
+                    setup_args["data_split_stratify"] = True
+                    _pycaret_setup_safe(clf_setup, **setup_args)
+                else:
+                    setup_args["data_split_stratify"] = False
+                    _pycaret_setup_safe(reg_setup, **setup_args)
+
+                # Verify setup succeeded and save feature names
                 try:
-                    _ = get_config('X_train')
+                    X_train = get_config('X_train')
+                    st.session_state.feature_names = X_train.columns.tolist()
                 except Exception as e:
                     st.error("❌ PyCaret setup failed. Check data format or target column.")
                     st.exception(e)
@@ -1019,9 +1014,12 @@ def training_page():
                 else:
                     pred_df = reg_predict(best_model)
 
-                # Extract predictions and true labels
-                test_predictions = pred_df.iloc[:, -1]          # prediction column is usually the last one
-                y_test = pred_df[target_col]                    # true labels
+                # ---------- Safer extraction of predictions ----------
+                if problem_type == "Classification":
+                    test_predictions = pred_df.get("prediction_label", pred_df.iloc[:, -1])
+                else:
+                    test_predictions = pred_df.get("prediction", pred_df.iloc[:, -1])
+                y_test = pred_df[target_col]
 
                 # Save results
                 st.session_state.predictions = test_predictions.values
@@ -1034,10 +1032,9 @@ def training_page():
                     st.code(str(best_model), language='python')
                     if hasattr(best_model, 'feature_importances_'):
                         st.markdown("#### 🔍 Feature Importance (Top 10)")
-                        X_train = get_config('X_train')
-                        feature_names = X_train.columns.tolist()
+                        feature_names = st.session_state.feature_names
                         importances = best_model.feature_importances_
-                        if len(feature_names) == len(importances):
+                        if feature_names and len(feature_names) == len(importances):
                             imp_df = pd.DataFrame({'feature': feature_names, 'importance': importances})
                             imp_df = imp_df.sort_values('importance', ascending=False).head(10)
                             st.dataframe(imp_df, use_container_width=True)
@@ -1045,11 +1042,9 @@ def training_page():
                             st.warning(f"Feature importance length ({len(importances)}) does not match feature names length ({len(feature_names)}). Skipping display.")
                     elif hasattr(best_model, 'coef_'):
                         st.markdown("#### 🔍 Model Coefficients")
-                        X_train = get_config('X_train')
-                        feature_names = X_train.columns.tolist()
+                        feature_names = st.session_state.feature_names
                         coef = best_model.coef_
                         if coef.ndim == 2:
-                            # Multi-class: average absolute coefficients
                             imp_df = pd.DataFrame({'feature': feature_names, 'importance': np.abs(coef).mean(axis=0)})
                             imp_df = imp_df.sort_values('importance', ascending=False).head(10)
                             st.markdown("Mean Absolute Coefficients (Multi-class)")
@@ -1105,33 +1100,55 @@ def evaluation_page():
         st.error("Test data or predictions contain NaN values. Cannot compute metrics.")
         return
 
+    # ----- Add download button for predictions -----
+    results_df = pd.DataFrame({
+        "Actual": y_test,
+        "Predicted": predictions
+    })
+    st.download_button(
+        label="📥 Download Predictions (CSV)",
+        data=results_df.to_csv(index=False),
+        file_name="predictions.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
+
     with st.expander("🔍 Model Information", expanded=False):
         st.markdown("#### Best Model")
         st.code(str(model), language='python')
         try:
             if hasattr(model, 'feature_importances_'):
-                st.markdown("#### Feature Importance (All)")
-                X_train = get_config('X_train')
-                feat_names = X_train.columns.tolist()
+                st.markdown("#### 📊 Feature Importance (All Features)")
+                feature_names = st.session_state.get('feature_names', None)
                 importances = model.feature_importances_
-                if len(feat_names) == len(importances):
-                    imp_df = pd.DataFrame({'feature': feat_names, 'importance': importances})
-                    imp_df = imp_df.sort_values('importance', ascending=False)
+                if feature_names and len(feature_names) == len(importances):
+                    imp_df = pd.DataFrame({
+                        'Feature': feature_names,
+                        'Importance': importances
+                    }).sort_values('Importance', ascending=False)
+                    st.dataframe(imp_df, use_container_width=True)
+
+                    # Bar chart for top 15 features
+                    fig = px.bar(imp_df.head(15), x='Importance', y='Feature',
+                                 orientation='h', title="Top 15 Feature Importance")
+                    fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Feature names not available or length mismatch.")
+            elif hasattr(model, 'coef_'):
+                feature_names = st.session_state.get('feature_names', None)
+                coef = model.coef_
+                if feature_names:
+                    if coef.ndim == 2:
+                        imp_df = pd.DataFrame({'feature': feature_names, 'importance': np.abs(coef).mean(axis=0)})
+                        imp_df = imp_df.sort_values('importance', ascending=False)
+                        st.markdown("#### Mean Absolute Coefficients (Multi-class)")
+                    else:
+                        imp_df = pd.DataFrame({'feature': feature_names, 'coefficient': coef})
+                        imp_df = imp_df.sort_values('coefficient', ascending=False)
                     st.dataframe(imp_df, use_container_width=True)
                 else:
-                    st.info("Feature importance length mismatch. Skipping display.")
-            elif hasattr(model, 'coef_'):
-                X_train = get_config('X_train')
-                feat_names = X_train.columns.tolist()
-                coef = model.coef_
-                if coef.ndim == 2:
-                    imp_df = pd.DataFrame({'feature': feat_names, 'importance': np.abs(coef).mean(axis=0)})
-                    imp_df = imp_df.sort_values('importance', ascending=False)
-                    st.markdown("#### Mean Absolute Coefficients (Multi-class)")
-                else:
-                    imp_df = pd.DataFrame({'feature': feat_names, 'coefficient': coef})
-                    imp_df = imp_df.sort_values('coefficient', ascending=False)
-                st.dataframe(imp_df, use_container_width=True)
+                    st.info("Feature names not available.")
             else:
                 st.info("This model does not support feature importance display.")
         except Exception as e:
@@ -1294,7 +1311,7 @@ This model was generated using PyCaret AutoML through the No-Code ML Platform.
     if st.button("🔄 Reset All Data", type="secondary"):
         keys = [
             "data", "target_column", "problem_type", "model", "predictions",
-            "test_labels", "training_complete", "cleaned_data", "label_encoder"
+            "test_labels", "training_complete", "cleaned_data", "label_encoder", "feature_names"
         ]
         for key in keys:
             if key in st.session_state:
@@ -1367,7 +1384,7 @@ def dashboard_page():
             st.session_state.user_name = ""
             keys = [
                 "data", "target_column", "problem_type", "model", "predictions",
-                "test_labels", "training_complete", "cleaned_data", "label_encoder"
+                "test_labels", "training_complete", "cleaned_data", "label_encoder", "feature_names"
             ]
             for key in keys:
                 if key in st.session_state:
