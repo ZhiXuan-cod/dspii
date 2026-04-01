@@ -1110,18 +1110,7 @@ def evaluation_page():
         st.error("Test data or predictions contain NaN values. Cannot compute metrics.")
         return
 
-    # ----- Add download button for predictions -----
-    results_df = pd.DataFrame({
-        "Actual": y_test,
-        "Predicted": predictions
-    })
-    st.download_button(
-        label="📥 Download Predictions (CSV)",
-        data=results_df.to_csv(index=False),
-        file_name="predictions.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
+    # [REMOVED: prediction download button - moved to export page]
 
     with st.expander("🔍 Model Information", expanded=False):
         st.markdown("#### Best Model")
@@ -1236,7 +1225,6 @@ def evaluation_page():
 
 # ---------- Export page ----------
 def export_page():
-    import pickle
     st.markdown('<h2 class="sub-header">💾 Export Model and Results</h2>', unsafe_allow_html=True)
     if not st.session_state.training_complete:
         st.warning("⚠️ Please train a model first to export results.")
@@ -1245,31 +1233,81 @@ def export_page():
             st.rerun()
         return
 
+    # --- Auto‑detect target candidates ---
+    if st.session_state.data is not None:
+        df = st.session_state.data
+        classification_candidates = []
+        regression_candidates = []
+
+        for col in df.columns:
+            if col == st.session_state.target_column:
+                continue  # skip the already selected target
+            dtype = df[col].dtype
+            unique_vals = df[col].nunique(dropna=False)
+            if dtype in ['object', 'category']:
+                classification_candidates.append(col)
+            elif np.issubdtype(dtype, np.number):
+                # Numeric columns with few unique values are often categorical
+                if unique_vals < 20:
+                    classification_candidates.append(col)
+                else:
+                    regression_candidates.append(col)
+            # Ignore other types (e.g., datetime)
+
+        st.markdown("### 🎯 Detected Target Candidates")
+        with st.expander("Click to see possible target columns (for reference)", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Classification Targets**")
+                if classification_candidates:
+                    st.write(", ".join(classification_candidates))
+                else:
+                    st.write("None detected")
+            with col2:
+                st.markdown("**Regression Targets**")
+                if regression_candidates:
+                    st.write(", ".join(regression_candidates))
+                else:
+                    st.write("None detected")
+        st.markdown("---")
+
+    # --- Export options ---
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("#### 📊 Model Information")
         if st.button("Show Model Details"):
             st.write("**Best Model:**", st.session_state.model)
-        if st.button("💾 Download Model (pickle)"):
-            model_bytes = pickle.dumps(st.session_state.model)
-            st.download_button(
-                label="Click to download model",
-                data=model_bytes,
-                file_name="ml_model.pkl",
-                mime="application/octet-stream",
-                key="model_download"
-            )
-    with col2:
-        st.markdown("#### 📊 Model Report")
-        if st.button("Generate Model Report"):
-            if st.session_state.data is not None:
-                dataset_shape = st.session_state.data.shape
-                feature_count = len(st.session_state.data.columns) - 1
-            else:
-                dataset_shape = "N/A"
-                feature_count = "N/A"
 
-            report_content = f"""
+        # Removed the "Download Model (pickle)" button
+
+    with col2:
+        st.markdown("#### 📥 Download Predictions")
+        if st.session_state.predictions is not None and st.session_state.test_labels is not None:
+            results_df = pd.DataFrame({
+                "Actual": st.session_state.test_labels,
+                "Predicted": st.session_state.predictions
+            })
+            st.download_button(
+                label="Download Predictions (CSV)",
+                data=results_df.to_csv(index=False),
+                file_name="predictions.csv",
+                mime="text/csv",
+                key="export_predictions"
+            )
+        else:
+            st.warning("No predictions available. Please retrain the model.")
+
+    # --- Model report generation ---
+    st.markdown("#### 📄 Model Report")
+    if st.button("Generate Model Report"):
+        if st.session_state.data is not None:
+            dataset_shape = st.session_state.data.shape
+            feature_count = len(st.session_state.data.columns) - 1
+        else:
+            dataset_shape = "N/A"
+            feature_count = "N/A"
+
+        report_content = f"""
 # Machine Learning Model Report
 
 ## Project Information
@@ -1289,20 +1327,20 @@ def export_page():
 ## Notes
 This model was generated using PyCaret AutoML through the No-Code ML Platform.
 """
-            st.code(report_content, language='markdown')
-            pdf_bytes = text_to_simple_pdf_bytes(report_content, title="ML Model Report")
-            st.download_button(
-                "📥 Download Report (PDF)",
-                data=pdf_bytes,
-                file_name="ml_model_report.pdf",
-                mime="application/pdf"
-            )
-            st.download_button(
-                "📥 Download Report (Markdown)",
-                data=report_content,
-                file_name="ml_model_report.md",
-                mime="text/markdown"
-            )
+        st.code(report_content, language='markdown')
+        pdf_bytes = text_to_simple_pdf_bytes(report_content, title="ML Model Report")
+        st.download_button(
+            "📥 Download Report (PDF)",
+            data=pdf_bytes,
+            file_name="ml_model_report.pdf",
+            mime="application/pdf"
+        )
+        st.download_button(
+            "📥 Download Report (Markdown)",
+            data=report_content,
+            file_name="ml_model_report.md",
+            mime="text/markdown"
+        )
 
     st.markdown("### 📋 Session Information")
     session_info = {
