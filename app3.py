@@ -1074,7 +1074,7 @@ def training_page():
                 st.error(f"❌ Training failed: {type(e).__name__}: {str(e)}")
                 st.exception(e)   # Show full traceback for debugging
 
-# ---------- Evaluation page (updated) ----------
+# ---------- Evaluation page (improved for classification metrics) ----------
 def evaluation_page():
     st.markdown('<h2 class="sub-header">📈 Model Performance Evaluation</h2>', unsafe_allow_html=True)
 
@@ -1106,6 +1106,11 @@ def evaluation_page():
     try:
         y_test = np.asarray(y_test).ravel()
         predictions = np.asarray(predictions).ravel()
+
+        # Ensure no NaN values
+        if pd.isnull(y_test).any() or pd.isnull(predictions).any():
+            st.error("Test data or predictions contain NaN values. Cannot compute metrics.")
+            return
 
         with st.expander("🔍 Model Information", expanded=False):
             st.markdown("#### Best Model")
@@ -1141,57 +1146,83 @@ def evaluation_page():
         if problem_type == "Classification":
             st.markdown("### Classification Metrics")
 
-            # --- Handle label mapping if needed ---
-            y_test_original = y_test
-            pred_original = predictions
-
-            # If y_test is string but predictions are integers, map integers to strings
+            # --- Convert predictions and true labels to strings, handling PyCaret's internal encoding ---
+            # PyCaret may encode string labels as integers; we need to map back to original labels
+            # Determine if y_test is string and predictions are integers (typical after PyCaret)
             if y_test.dtype.kind in 'SU' and predictions.dtype.kind in 'iu':
+                # Map integer predictions back to original string labels
                 unique_true = np.unique(y_test)
+                # Assume PyCaret used the same order: 0 -> unique_true[0], 1 -> unique_true[1], ...
+                # This is safe because PyCaret internally uses LabelEncoder
                 mapping = {i: val for i, val in enumerate(unique_true)}
-                pred_original = np.array([mapping[int(p)] for p in predictions])
-                st.info("Mapped integer predictions to original string labels.")
-            # If both are strings but different sets (should not happen), try to align
+                # Convert predictions to strings using mapping
+                predictions_str = np.array([mapping[int(p)] for p in predictions])
+                y_test_str = y_test.astype(str)  # Already strings
+                st.info("Mapped integer predictions back to original string labels.")
             elif y_test.dtype.kind in 'SU' and predictions.dtype.kind in 'SU':
-                unique_true = np.unique(y_test)
-                unique_pred = np.unique(predictions)
-                if set(unique_true) != set(unique_pred):
-                    st.warning(f"Predicted labels ({unique_pred}) do not match true labels ({unique_true}). Metrics may be invalid.")
-            # If both are integers, leave as is
+                # Both are strings, but they might have different sets due to misalignment
+                # Convert both to string for safety
+                y_test_str = y_test.astype(str)
+                predictions_str = predictions.astype(str)
+                if set(np.unique(y_test_str)) != set(np.unique(predictions_str)):
+                    st.warning("Predicted and true label sets do not match. Metrics may be unreliable.")
             elif y_test.dtype.kind in 'iu' and predictions.dtype.kind in 'iu':
-                pass
+                # Both are integers; convert to string for metric functions (works with numeric labels too)
+                y_test_str = y_test.astype(str)
+                predictions_str = predictions.astype(str)
+                st.info("Using integer labels as strings.")
             else:
-                # Fallback: convert both to string
-                y_test_original = y_test.astype(str)
-                pred_original = predictions.astype(str)
+                # Fallback: convert everything to string
+                y_test_str = y_test.astype(str)
+                predictions_str = predictions.astype(str)
 
-            y_test_str = y_test_original.astype(str)
-            pred_str = pred_original.astype(str)
+            # Ensure both are 1D arrays of strings
+            y_test_str = y_test_str.flatten() if hasattr(y_test_str, 'flatten') else y_test_str
+            predictions_str = predictions_str.flatten() if hasattr(predictions_str, 'flatten') else predictions_str
 
-            with st.expander("Debug: Labels"):
-                st.write("True labels unique:", np.unique(y_test_str))
-                st.write("Pred labels unique:", np.unique(pred_str))
+            # Debug output
+            with st.expander("Debug: Label Sets"):
+                st.write("Unique true labels:", np.unique(y_test_str))
+                st.write("Unique predicted labels:", np.unique(predictions_str))
+                st.write("Number of true labels:", len(y_test_str))
+                st.write("Number of predictions:", len(predictions_str))
+
+            # Compute metrics with error handling
+            try:
+                acc = accuracy_score(y_test_str, predictions_str)
+                prec = precision_score(y_test_str, predictions_str, average='weighted', zero_division=0)
+                rec = recall_score(y_test_str, predictions_str, average='weighted', zero_division=0)
+                f1 = f1_score(y_test_str, predictions_str, average='weighted', zero_division=0)
+            except Exception as e:
+                st.error(f"Error computing classification metrics: {e}")
+                st.info("Check if both true and predicted labels have at least one class in common.")
+                return
 
             col1, col2 = st.columns(2)
             with col1:
-                acc = accuracy_score(y_test_str, pred_str)
                 st.metric("Accuracy", f"{acc:.4f}")
-                st.metric("Precision", f"{precision_score(y_test_str, pred_str, average='weighted', zero_division=0):.4f}")
-                st.metric("Recall", f"{recall_score(y_test_str, pred_str, average='weighted', zero_division=0):.4f}")
+                st.metric("Precision (weighted)", f"{prec:.4f}")
+                st.metric("Recall (weighted)", f"{rec:.4f}")
             with col2:
-                st.metric("F1 Score", f"{f1_score(y_test_str, pred_str, average='weighted', zero_division=0):.4f}")
+                st.metric("F1 Score (weighted)", f"{f1:.4f}")
 
             # Confusion matrix
-            cm = confusion_matrix(y_test_str, pred_str)
-            fig = px.imshow(cm, text_auto=True, aspect="auto",
-                            labels=dict(x="Predicted", y="Actual", color="Count"),
-                            title="Confusion Matrix")
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                cm = confusion_matrix(y_test_str, predictions_str)
+                fig = px.imshow(cm, text_auto=True, aspect="auto",
+                                labels=dict(x="Predicted", y="Actual", color="Count"),
+                                title="Confusion Matrix")
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not generate confusion matrix: {e}")
 
             # Classification report
-            report = classification_report(y_test_str, pred_str, output_dict=True, zero_division=0)
-            report_df = pd.DataFrame(report).transpose()
-            st.dataframe(report_df, use_container_width=True)
+            try:
+                report = classification_report(y_test_str, predictions_str, output_dict=True, zero_division=0)
+                report_df = pd.DataFrame(report).transpose()
+                st.dataframe(report_df, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not generate classification report: {e}")
 
         else:  # Regression
             st.markdown("### Regression Metrics")
@@ -1228,7 +1259,7 @@ def evaluation_page():
 
     except Exception as e:
         st.error(f"Unknown error occurred during evaluation: {str(e)}")
-        st.info("Please try retraining the model or check the data format.")
+        st.exception(e)
 
 # ---------- Export page ----------
 def export_page():
