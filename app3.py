@@ -1429,6 +1429,7 @@ def account_page():
     if st.button("← Back to Dashboard", use_container_width=True, key="back_to_dashboard"):
         go_to("dashboard")
 
+# ---------- MODIFIED DASHBOARD PAGE: Account is now a separate button, not part of the sequential steps ----------
 def dashboard_page():
     set_bg_image_local("purple.png")
 
@@ -1446,9 +1447,8 @@ def dashboard_page():
 
     st.markdown(f"<h1 style='color: black;'>Welcome, {st.session_state.user_name}!</h1>", unsafe_allow_html=True)
 
-    # Define sub-pages in order
-    sub_pages = [
-        "account",
+    # Define the main workflow steps (account is NOT included here)
+    workflow_pages = [
         "data_upload",
         "data_cleaning",
         "eda",
@@ -1456,9 +1456,8 @@ def dashboard_page():
         "model_evaluation",
         "export_results"
     ]
-    # Display names for radio
+    # Display names for the radio buttons
     page_display = {
-        "account": "👤 Account",
         "data_upload": "📁 Data Upload",
         "data_cleaning": "🧹 Data Cleaning",
         "eda": "🔍 Exploratory Data Analysis",
@@ -1470,24 +1469,30 @@ def dashboard_page():
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/2103/2103832.png", width=100)
 
+        # Separate Account button (outside the sequential steps)
+        if st.button("👤 Account Settings", key="account_sidebar_btn", use_container_width=True):
+            go_to("account")
+
+        st.markdown("---")  # separator
+
         st.markdown("### Sequential Steps")
+        # Determine which step is currently selected (if current page is not in workflow_pages, default to data_upload)
+        if st.session_state.page in workflow_pages:
+            current_index = workflow_pages.index(st.session_state.page)
+        else:
+            current_index = 0
+
         selected_display = st.radio(
             "Select a step:",
-            options=[page_display[p] for p in sub_pages],
-            index=sub_pages.index(st.session_state.page) if st.session_state.page in sub_pages else 0,
+            options=[page_display[p] for p in workflow_pages],
+            index=current_index,
             key="sidebar_radio"
         )
-        # Map display back to page key
+        # Map the display name back to the page key
         selected_page = [p for p, d in page_display.items() if d == selected_display][0]
 
         if selected_page != st.session_state.page:
             go_to(selected_page)
-            
-def go_to(page: str):
-    st.write(f"🟢 go_to called: target={page}, current={st.session_state.page}")
-    if st.session_state.page != page:
-        st.session_state.page = page
-        st.rerun()
 
         if not PYCARET_AVAILABLE:
             st.error("⚠️ PyCaret not installed. Install with: `pip install pycaret`")
@@ -1508,7 +1513,7 @@ def go_to(page: str):
                     st.session_state[key] = None
             go_to("front")
 
-    # Render the appropriate sub-page
+    # Render the appropriate page based on current session state
     if st.session_state.page == "account":
         account_page()
     elif st.session_state.page == "data_upload":
@@ -1524,7 +1529,7 @@ def go_to(page: str):
     elif st.session_state.page == "export_results":
         export_page()
     else:
-        # fallback
+        # Fallback: if page is something else (e.g., "dashboard" itself), show upload page
         upload_page()
 
 # ---------- Main routing ----------
