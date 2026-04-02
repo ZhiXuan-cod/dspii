@@ -607,7 +607,7 @@ def login_page():
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Upload page (with target candidate detection) ----------
+# ---------- Upload page (with robust CSV reading) ----------
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     col1, col2 = st.columns([2, 1])
@@ -627,57 +627,70 @@ def upload_page():
         if uploaded_file is not None:
             if uploaded_file.size > 200 * 1024 * 1024:
                 st.warning("File size exceeds 200 MB. Large files may cause performance issues. Consider using a subset.")
-            try:
-                df = pd.read_csv(uploaded_file)
-                st.session_state.data = df
-                st.success(f"✔️ Successfully loaded {len(df)} rows and {len(df.columns)} columns")
-                st.markdown("### Data Preview")
-                st.dataframe(df.head(), use_container_width=True)
-                with st.expander("📊 Basic Data Statistics"):
-                    st.write("**Shape:**", df.shape)
-                    col_types = pd.DataFrame({
-                        'Column': df.columns,
-                        'Type': df.dtypes.astype(str),
-                        'Missing Values': df.isnull().sum(),
-                        'Unique Values': df.nunique()
-                    })
-                    st.dataframe(col_types, use_container_width=True)
+            # Try multiple encodings if the default fails
+            encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+            df = None
+            last_error = None
+            for enc in encodings:
+                try:
+                    df = pd.read_csv(uploaded_file, encoding=enc)
+                    break
+                except UnicodeDecodeError as e:
+                    last_error = e
+                    continue
+                except Exception as e:
+                    st.error(f"Error reading CSV with encoding {enc}: {e}")
+                    last_error = e
+                    continue
+            if df is None:
+                st.error(f"Could not read CSV file. Last error: {last_error}")
+                return
+            st.session_state.data = df
+            st.success(f"✔️ Successfully loaded {len(df)} rows and {len(df.columns)} columns")
+            st.markdown("### Data Preview")
+            st.dataframe(df.head(), use_container_width=True)
+            with st.expander("📊 Basic Data Statistics"):
+                st.write("**Shape:**", df.shape)
+                col_types = pd.DataFrame({
+                    'Column': df.columns,
+                    'Type': df.dtypes.astype(str),
+                    'Missing Values': df.isnull().sum(),
+                    'Unique Values': df.nunique()
+                })
+                st.dataframe(col_types, use_container_width=True)
 
-                # --- Auto‑detect target candidates (displayed directly) ---
-                classification_candidates = []
-                regression_candidates = []
+            # --- Auto‑detect target candidates (displayed directly) ---
+            classification_candidates = []
+            regression_candidates = []
 
-                for col in df.columns:
-                    dtype = df[col].dtype
-                    unique_vals = df[col].nunique(dropna=False)
-                    if dtype in ['object', 'category']:
+            for col in df.columns:
+                dtype = df[col].dtype
+                unique_vals = df[col].nunique(dropna=False)
+                if dtype in ['object', 'category']:
+                    classification_candidates.append(col)
+                elif np.issubdtype(dtype, np.number):
+                    # Numeric columns with few unique values are often categorical
+                    if unique_vals < 20:
                         classification_candidates.append(col)
-                    elif np.issubdtype(dtype, np.number):
-                        # Numeric columns with few unique values are often categorical
-                        if unique_vals < 20:
-                            classification_candidates.append(col)
-                        else:
-                            regression_candidates.append(col)
-                    # Ignore other types (e.g., datetime)
-
-                st.markdown("### 🎯 Detected Target Candidates")
-                col1a, col2a = st.columns(2)
-                with col1a:
-                    st.markdown("**Classification Targets**")
-                    if classification_candidates:
-                        st.write(", ".join(classification_candidates))
                     else:
-                        st.write("None detected")
-                with col2a:
-                    st.markdown("**Regression Targets**")
-                    if regression_candidates:
-                        st.write(", ".join(regression_candidates))
-                    else:
-                        st.write("None detected")
-                st.markdown("---")
+                        regression_candidates.append(col)
+                # Ignore other types (e.g., datetime)
 
-            except Exception as e:
-                st.error(f"Error loading file: {str(e)}")
+            st.markdown("### 🎯 Detected Target Candidates")
+            col1a, col2a = st.columns(2)
+            with col1a:
+                st.markdown("**Classification Targets**")
+                if classification_candidates:
+                    st.write(", ".join(classification_candidates))
+                else:
+                    st.write("None detected")
+            with col2a:
+                st.markdown("**Regression Targets**")
+                if regression_candidates:
+                    st.write(", ".join(regression_candidates))
+                else:
+                    st.write("None detected")
+            st.markdown("---")
 
     with col2:
         if st.session_state.data is not None:
@@ -1392,28 +1405,32 @@ def account_page():
             elif len(new_password) < 6:
                 st.error("New password must be at least 6 characters.")
             else:
-                # Fetch current user from Supabase to verify password
-                try:
-                    response = st.session_state.supabase.table("users").select("*").eq("email", st.session_state.user_email).execute()
-                    if len(response.data) == 0:
-                        st.error("User not found.")
-                    else:
-                        user = response.data[0]
-                        stored_hash = user.get("password", "")
-                        if verify_password(current_password, stored_hash):
-                            # Hash the new password
-                            new_hash = hash_password(new_password)
-                            # Update the password in Supabase
-                            st.session_state.supabase.table("users").update({"password": new_hash}).eq("email", st.session_state.user_email).execute()
-                            st.success("Password updated successfully!")
+                # Check if Supabase is connected
+                if st.session_state.supabase is None:
+                    st.error("Supabase connection is not available. Cannot update password.")
+                else:
+                    # Fetch current user from Supabase to verify password
+                    try:
+                        response = st.session_state.supabase.table("users").select("*").eq("email", st.session_state.user_email).execute()
+                        if len(response.data) == 0:
+                            st.error("User not found.")
                         else:
-                            st.error("Current password is incorrect.")
-                except Exception as e:
-                    st.error(f"Failed to update password: {e}")
+                            user = response.data[0]
+                            stored_hash = user.get("password", "")
+                            if verify_password(current_password, stored_hash):
+                                # Hash the new password
+                                new_hash = hash_password(new_password)
+                                # Update the password in Supabase
+                                st.session_state.supabase.table("users").update({"password": new_hash}).eq("email", st.session_state.user_email).execute()
+                                st.success("Password updated successfully!")
+                            else:
+                                st.error("Current password is incorrect.")
+                    except Exception as e:
+                        st.error(f"Failed to update password: {e}")
 
     st.markdown("---")
     if st.button("← Back to Dashboard", use_container_width=True):
-        st.session_state.app_page = "📁 Data Upload"  # or any default page
+        st.session_state.app_page = "📁 Data Upload"
         st.rerun()
 
 # ---------- Dashboard ----------
