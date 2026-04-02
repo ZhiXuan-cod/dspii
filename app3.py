@@ -1379,7 +1379,7 @@ This model was generated using PyCaret AutoML through the No-Code ML Platform.
             st.session_state.app_page = "📁 Data Upload"
             st.rerun()
 
-# ---------- NEW: Account Page (with change password) ----------
+# ---------- Account Page (with change password) ----------
 def account_page():
     st.markdown('<h2 class="sub-header">👤 Account Settings</h2>', unsafe_allow_html=True)
 
@@ -1451,17 +1451,9 @@ def dashboard_page():
 
     st.markdown(f"<h1 style='color: black;'>Welcome, {st.session_state.user_name}!</h1>", unsafe_allow_html=True)
 
-    # ---------- Synchronize sidebar selection with current page ----------
-    # If the current page (app_page) is not equal to the stored sidebar selection,
-    # update the sidebar selection to match the current page. This ensures that
-    # when a button inside a page changes app_page, the radio button highlights correctly.
-    if st.session_state.app_page != st.session_state.get("sidebar_selection", st.session_state.app_page):
-        st.session_state.sidebar_selection = st.session_state.app_page
-
-    # Sidebar selection synchronisation
-    # Include the new Account page in the list of steps
+    # --- Sidebar with steps that always reflect the current page ---
     app_page_options = [
-        "👤 Account",           # <-- NEW: Account page added at the top
+        "👤 Account",
         "📁 Data Upload",
         "🧹 Data Cleaning",
         "🔍 Exploratory Data Analysis",
@@ -1470,26 +1462,19 @@ def dashboard_page():
         "💾 Export Results"
     ]
 
-    # If the sidebar selection is not yet initialised, set it to current app_page
-    if "sidebar_selection" not in st.session_state:
-        st.session_state.sidebar_selection = st.session_state.app_page
-
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/2103/2103832.png", width=100)
-
-        # Account information is now removed from sidebar; moved to dedicated page
 
         st.markdown("### Sequential Steps")
         selected = st.radio(
             "Select a step:",
             app_page_options,
-            index=app_page_options.index(st.session_state.sidebar_selection),
+            index=app_page_options.index(st.session_state.app_page),  # highlight current page
             key="sidebar_radio"
         )
 
-        # Update both sidebar_selection and app_page if the radio changed
-        if selected != st.session_state.sidebar_selection:
-            st.session_state.sidebar_selection = selected
+        # When the user clicks a different step, update the page
+        if selected != st.session_state.app_page:
             st.session_state.app_page = selected
             st.rerun()
 
@@ -1512,7 +1497,7 @@ def dashboard_page():
             go_to("front")
             st.rerun()
 
-    # Page routing based on app_page (not sidebar_selection)
+    # Page routing based on app_page
     if st.session_state.app_page == "👤 Account":
         account_page()
     elif st.session_state.app_page == "📁 Data Upload":
