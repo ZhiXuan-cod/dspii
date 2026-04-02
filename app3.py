@@ -28,7 +28,6 @@ try:
     PYCARET_AVAILABLE = True
 except ImportError:
     PYCARET_AVAILABLE = False
-    st.warning("⚠️ PyCaret not installed. Install with 'pip install pycaret' to use AutoML.")
 
 # ---------- Scipy for outlier detection ----------
 try:
@@ -36,7 +35,6 @@ try:
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
-    st.warning("Scipy not installed. Outlier detection (Z‑score) will be disabled. Install with `pip install scipy`.")
 
 # ---------- Minimal PDF generator ----------
 def _pdf_escape(text: str) -> str:
@@ -219,7 +217,6 @@ def authenticate_user(email, password):
         return False, None, None
 
 # ---------- Page navigation (unified) ----------
-# Define all possible page names
 PAGES = {
     "front": "Front Page",
     "login": "Login / Register",
@@ -244,10 +241,17 @@ if "user_email" not in st.session_state:
     st.session_state.user_email = ""
 
 def go_to(page: str):
-    """Unified navigation function."""
+    """Unified navigation function with fallback for older Streamlit versions."""
     if st.session_state.page != page:
         st.session_state.page = page
-        st.rerun()
+        # Compatibility: try st.rerun first, fall back to experimental_rerun
+        if hasattr(st, 'rerun'):
+            st.rerun()
+        elif hasattr(st, 'experimental_rerun'):
+            st.experimental_rerun()
+        else:
+            # Last resort: manually force a rerun by raising an exception
+            raise Exception("Streamlit rerun not available. Please upgrade Streamlit.")
 
 # ---------- Page configuration ----------
 st.set_page_config(
@@ -257,7 +261,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ---------- Global CSS styles (including download buttons) ----------
+# ---------- Global CSS styles ----------
 st.markdown("""
 <style>
     .main-header {
@@ -330,8 +334,6 @@ if "training_complete" not in st.session_state:
     st.session_state.training_complete = False
 if "cleaned_data" not in st.session_state:
     st.session_state.cleaned_data = None
-if "label_encoder" not in st.session_state:
-    st.session_state.label_encoder = None
 if "feature_names" not in st.session_state:
     st.session_state.feature_names = None
 if "training_done" not in st.session_state:
@@ -391,7 +393,7 @@ def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
     elif outlier_option != "None" and not SCIPY_AVAILABLE:
         st.warning("Scipy not installed. Z‑score outlier detection disabled. Use 'Cap' option instead.")
 
-    # Categorical encoding (skip target) - cleaning page forces "None"
+    # Categorical encoding (skip target)
     if encode_option != "None":
         cat_cols = cleaned.select_dtypes(include=['object']).columns
         cat_cols = [c for c in cat_cols if c != target_col]
@@ -403,7 +405,7 @@ def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
             elif encode_option == "One-Hot Encoding":
                 cleaned = pd.get_dummies(cleaned, columns=cat_cols, drop_first=True)
 
-    # Feature scaling (skip target) - cleaning page forces "None"
+    # Feature scaling (skip target)
     if scale_option != "None":
         num_cols = cleaned.select_dtypes(include=[np.number]).columns
         num_cols = [c for c in num_cols if c != target_col]
@@ -625,7 +627,6 @@ def login_page():
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
 
-    # Left column: upload and preview
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("""
@@ -642,7 +643,6 @@ def upload_page():
 
         uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
         if uploaded_file is not None:
-            # Try multiple encodings
             encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
             df = None
             last_error = None
@@ -663,7 +663,6 @@ def upload_page():
             st.session_state.data = df
             st.success(f"✔️ Successfully loaded {len(df)} rows and {len(df.columns)} columns")
 
-        # Always show data preview if data exists in session state
         if st.session_state.data is not None:
             st.markdown("### Data Preview")
             st.dataframe(st.session_state.data.head(), use_container_width=True)
@@ -712,7 +711,6 @@ def upload_page():
         else:
             st.info("📂 No data loaded yet. Please upload a CSV file.")
 
-    # Right column: target selection and navigation
     with col2:
         if st.session_state.data is not None:
             st.markdown("### 📌 Define Target Column")
@@ -730,7 +728,6 @@ def upload_page():
         else:
             st.info("Please upload data first.")
 
-    # Bottom: Go to Cleaning button
     st.markdown("---")
     _, col2_center, _ = st.columns([1, 2, 1])
     with col2_center:
@@ -741,7 +738,6 @@ def upload_page():
             st.button("➡️ Go to Data Cleaning (set target first)", disabled=True, use_container_width=True)
 
 def cleaning_page():
-    # Redirect if no data or target
     if st.session_state.data is None or st.session_state.target_column is None:
         st.warning("⚠️ Please upload data and set target column first.")
         if st.button("Go to Data Upload", key="goto_upload_from_cleaning"):
@@ -928,7 +924,7 @@ def training_page():
     target_col = st.session_state.target_column
     problem_type = st.session_state.problem_type
 
-    # ---------- Data validation ----------
+    # Data validation
     if target_col not in df.columns:
         st.error(f"❌ Target column '{target_col}' is not in the dataset.")
         return
@@ -971,7 +967,6 @@ def training_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # ---------- Training mode preset ----------
     if "training_mode" not in st.session_state:
         st.session_state.training_mode = "Balanced"
 
@@ -986,7 +981,7 @@ def training_page():
     if mode != st.session_state.training_mode:
         st.session_state.training_mode = mode
 
-    # ---------- Allowed models based on mode ----------
+    # Allowed models based on mode
     if problem_type == "Classification":
         if mode == "Fast":
             allowed_models = ['lr', 'ridge', 'dt']
@@ -1002,7 +997,6 @@ def training_page():
         else:
             allowed_models = ['lr', 'ridge', 'dt', 'rf', 'lar', 'svm', 'xgboost']
 
-    # ---------- User parameters ----------
     col1, col2, col3 = st.columns(3)
     with col1:
         test_size = st.slider("Test Size (%)", 10, 40, 20) / 100
@@ -1015,10 +1009,6 @@ def training_page():
     if sample_frac < 1.0:
         df = df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)
         st.info(f"Using {len(df)} rows after sampling (original: {st.session_state.data.shape[0]} rows).")
-
-    # Track if training has been performed
-    if "training_done" not in st.session_state:
-        st.session_state.training_done = False
 
     if st.button("🚀 Start Automated Training", type="primary", use_container_width=True, key="start_training"):
         with st.spinner(f"🧠 PyCaret is training {len(allowed_models)} models with {fold}-fold CV..."):
@@ -1079,7 +1069,7 @@ def training_page():
                 if problem_type == "Classification":
                     test_predictions = pred_df.get("prediction_label", pred_df.iloc[:, -1])
                 else:
-                    test_predictions = pred_df.get("prediction_label", pred_df.iloc[:, -1])  # regression also uses "prediction_label" in newer PyCaret
+                    test_predictions = pred_df.get("prediction_label", pred_df.iloc[:, -1])
                 y_test = pred_df[target_col]
 
                 st.session_state.predictions = test_predictions.values
@@ -1088,7 +1078,6 @@ def training_page():
                 st.session_state.training_complete = True
                 st.session_state.training_done = True
 
-                # Display results immediately
                 with st.expander("📊 Training Results (click to expand)", expanded=True):
                     st.markdown("#### 🏆 Best Model")
                     st.code(str(best_model), language='python')
@@ -1129,7 +1118,6 @@ def training_page():
                 st.error(f"❌ Training failed: {type(e).__name__}: {str(e)}")
                 st.exception(e)
 
-    # If training is done, show a button to go to evaluation
     if st.session_state.training_done:
         st.markdown("---")
         _, col2, _ = st.columns([1, 2, 1])
@@ -1371,10 +1359,9 @@ This model was generated using PyCaret AutoML through the No-Code ML Platform.
     _, col2, _ = st.columns([1, 2, 1])
     with col2:
         if st.button("🔄 Start Over (Back to Data Upload)", type="secondary", use_container_width=True, key="start_over"):
-            # Reset all relevant session state keys
             keys_to_reset = [
                 "data", "target_column", "problem_type", "model", "predictions",
-                "test_labels", "training_complete", "cleaned_data", "label_encoder", "feature_names",
+                "test_labels", "training_complete", "cleaned_data", "feature_names",
                 "training_done"
             ]
             for key in keys_to_reset:
@@ -1429,7 +1416,6 @@ def account_page():
     if st.button("← Back to Dashboard", use_container_width=True, key="back_to_dashboard"):
         go_to("dashboard")
 
-# ---------- MODIFIED DASHBOARD PAGE: Account is now a separate button, not part of the sequential steps ----------
 def dashboard_page():
     set_bg_image_local("purple.png")
 
@@ -1447,7 +1433,7 @@ def dashboard_page():
 
     st.markdown(f"<h1 style='color: black;'>Welcome, {st.session_state.user_name}!</h1>", unsafe_allow_html=True)
 
-    # Define the main workflow steps (account is NOT included here)
+    # Define the main workflow steps (account is separate)
     workflow_pages = [
         "data_upload",
         "data_cleaning",
@@ -1456,7 +1442,6 @@ def dashboard_page():
         "model_evaluation",
         "export_results"
     ]
-    # Display names for the radio buttons
     page_display = {
         "data_upload": "📁 Data Upload",
         "data_cleaning": "🧹 Data Cleaning",
@@ -1469,14 +1454,14 @@ def dashboard_page():
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/2103/2103832.png", width=100)
 
-        # Separate Account button (outside the sequential steps)
+        # Account button (outside the sequential steps)
         if st.button("👤 Account Settings", key="account_sidebar_btn", use_container_width=True):
             go_to("account")
 
-        st.markdown("---")  # separator
+        st.markdown("---")
 
         st.markdown("### Sequential Steps")
-        # Determine which step is currently selected (if current page is not in workflow_pages, default to data_upload)
+        # Determine current index in workflow
         if st.session_state.page in workflow_pages:
             current_index = workflow_pages.index(st.session_state.page)
         else:
@@ -1488,7 +1473,6 @@ def dashboard_page():
             index=current_index,
             key="sidebar_radio"
         )
-        # Map the display name back to the page key
         selected_page = [p for p, d in page_display.items() if d == selected_display][0]
 
         if selected_page != st.session_state.page:
@@ -1502,10 +1486,9 @@ def dashboard_page():
             st.session_state.logged_in = False
             st.session_state.user_name = ""
             st.session_state.user_email = ""
-            # Reset all data-related session state
             keys_to_clear = [
                 "data", "target_column", "problem_type", "model", "predictions",
-                "test_labels", "training_complete", "cleaned_data", "label_encoder", "feature_names",
+                "test_labels", "training_complete", "cleaned_data", "feature_names",
                 "training_done"
             ]
             for key in keys_to_clear:
@@ -1529,7 +1512,7 @@ def dashboard_page():
     elif st.session_state.page == "export_results":
         export_page()
     else:
-        # Fallback: if page is something else (e.g., "dashboard" itself), show upload page
+        # Fallback: show upload page (should not happen)
         upload_page()
 
 # ---------- Main routing ----------
@@ -1543,11 +1526,10 @@ elif st.session_state.page == "dashboard":
     else:
         dashboard_page()
 else:
-    # If any other page (like data_upload) is set without being logged in, redirect to login
+    # If any other page is set without being logged in, redirect to login
     if not st.session_state.logged_in and st.session_state.page not in ["front", "login"]:
         go_to("login")
     else:
-        # This case should not happen normally, but fallback to dashboard if logged in
         if st.session_state.logged_in:
             dashboard_page()
         else:
