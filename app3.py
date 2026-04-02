@@ -318,6 +318,9 @@ if "label_encoder" not in st.session_state:
     st.session_state.label_encoder = None
 if "feature_names" not in st.session_state:
     st.session_state.feature_names = None
+# ADDED: redirect flag for fixing button
+if "redirect_to_cleaning" not in st.session_state:
+    st.session_state.redirect_to_cleaning = False
 
 # ---------- Helper function for cleaning (protects target column) ----------
 def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
@@ -609,6 +612,13 @@ def login_page():
 
 # ---------- Upload page (with robust CSV reading) ----------
 def upload_page():
+    # --- Redirect logic: if target is set and redirect flag is True, go to cleaning page
+    if st.session_state.get("target_column") is not None and st.session_state.redirect_to_cleaning:
+        st.session_state.redirect_to_cleaning = False
+        st.session_state.app_page = "🧹 Data Cleaning"
+        st.rerun()
+    # -------------------------------------------------------------
+
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -701,19 +711,22 @@ def upload_page():
                 index=len(st.session_state.data.columns)-1
             )
             problem_type = st.selectbox("Select problem type:", ["Classification", "Regression"])
+            # FIXED: button sets target and redirect flag
             if st.button("Set Target & Continue", type="primary"):
                 st.session_state.target_column = target_col
                 st.session_state.problem_type = problem_type
                 st.success(f"✅ Target set: {target_col} ({problem_type})")
-                st.session_state.app_page = "🧹 Data Cleaning"
+                # Set flag to redirect to cleaning page on next run
+                st.session_state.redirect_to_cleaning = True
                 st.rerun()
 
     st.markdown("---")
     _, col2, _ = st.columns([1, 2, 1])
     with col2:
         if st.session_state.data is not None and st.session_state.target_column is not None:
+            # Also use redirect for consistency
             if st.button("➡️ Go to Data Cleaning", type="primary", use_container_width=True):
-                st.session_state.app_page = "🧹 Data Cleaning"
+                st.session_state.redirect_to_cleaning = True
                 st.rerun()
         else:
             st.button("➡️ Go to Data Cleaning (set target first)", disabled=True, use_container_width=True)
