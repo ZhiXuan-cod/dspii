@@ -1034,23 +1034,26 @@ def account_page():
                                 st.error("Current password is incorrect.")
                     except Exception as e:
                         st.error(f"Failed to update password: {e}")
-    st.markdown("---")
-    if st.button("← Back to Dashboard", use_container_width=True, key="back_to_dashboard"):
-        go_to("dashboard")
+    # No back button needed because user can select another step in sidebar
 
 def dashboard_page():
     set_bg_image_local("purple.png")
     st.markdown(f"<h1 style='color: black;'>Welcome, {st.session_state.user_name}!</h1>", unsafe_allow_html=True)
-    workflow_pages = ["data_upload", "data_cleaning", "eda", "model_training", "model_evaluation", "export_results"]
-    page_display = {"data_upload": "📁 Data Upload", "data_cleaning": "🧹 Data Cleaning", "eda": "🔍 Exploratory Data Analysis", "model_training": "📐 Model Training", "model_evaluation": "📈 Model Evaluation", "export_results": "💾 Export Results"}
+    # Sequential steps including Account at the end
+    workflow_pages = ["data_upload", "data_cleaning", "eda", "model_training", "model_evaluation", "export_results", "account"]
+    page_display = {
+        "data_upload": "📁 Data Upload",
+        "data_cleaning": "🧹 Data Cleaning",
+        "eda": "🔍 Exploratory Data Analysis",
+        "model_training": "📐 Model Training",
+        "model_evaluation": "📈 Model Evaluation",
+        "export_results": "💾 Export Results",
+        "account": "👤 Account Settings"
+    }
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/2103/2103832.png", width=100)
         st.markdown(f"**User:** {st.session_state.user_name}")
         st.markdown(f"**Email:** {st.session_state.user_email}")
-        st.markdown("---")
-        # Account button
-        if st.button("👤 Account Settings", key="account_sidebar_btn", use_container_width=True):
-            go_to("account")
         st.markdown("---")
         st.markdown("### Sequential Steps")
         if st.session_state.page in workflow_pages:
