@@ -17,7 +17,7 @@ from sklearn.metrics import (
 import warnings
 warnings.filterwarnings('ignore')
 
-# ---------- Supabase ----------
+# ---------- Supabase import ----------
 from supabase import create_client
 
 # ---------- PyCaret imports (including clustering) ----------
@@ -288,6 +288,7 @@ st.markdown("""
         transform: scale(1.02) !important;
         box-shadow: 0 4px 12px rgba(33, 150, 243, 0.4) !important;
     }
+    /* Sidebar background colour (preserved) */
     section[data-testid="stSidebar"] {
         background: #ffffe0 !important;
     }
@@ -586,7 +587,7 @@ def upload_page():
     with col2:
         if st.session_state.data is not None:
             st.markdown("### 📌 Define Problem Type")
-            # Three options: Classification, Regression, Clustering
+            # THREE OPTIONS: CLASSIFICATION, REGRESSION, CLUSTERING
             problem_type = st.selectbox("Select problem type:", ["Classification", "Regression", "Clustering"])
             if problem_type == "Clustering":
                 st.info("Clustering is unsupervised – no target column required.")
@@ -633,7 +634,7 @@ def cleaning_page():
 
 def eda_page():
     if st.session_state.data is None:
-        st.warning("⚠️ Please upload data first.")
+        st.warning("⚠️ Please upload data and set target column first.")
         return
     st.markdown('<h2 class="sub-header">🔍 Exploratory Data Analysis</h2>', unsafe_allow_html=True)
     df = st.session_state.data
