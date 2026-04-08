@@ -17,14 +17,13 @@ from sklearn.metrics import (
 import warnings
 warnings.filterwarnings('ignore')
 
-# ---------- Supabase import ----------
+# ---------- Supabase ----------
 from supabase import create_client
 
 # ---------- PyCaret imports (including clustering) ----------
 try:
     from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, get_config, pull
     from pycaret.regression import setup as reg_setup, compare_models as reg_compare, predict_model as reg_predict
-    # New: clustering module
     from pycaret.clustering import setup as clust_setup, create_model as clust_create, assign_model as clust_assign, get_config as clust_get_config, pull as clust_pull
     PYCARET_AVAILABLE = True
     CLUSTERING_AVAILABLE = True
@@ -32,7 +31,6 @@ except ImportError:
     PYCARET_AVAILABLE = False
     CLUSTERING_AVAILABLE = False
 except Exception:
-    # In case pycaret.clustering exists but something else fails
     CLUSTERING_AVAILABLE = False
 
 # ---------- Scipy for outlier detection ----------
@@ -290,7 +288,6 @@ st.markdown("""
         transform: scale(1.02) !important;
         box-shadow: 0 4px 12px rgba(33, 150, 243, 0.4) !important;
     }
-    /* Sidebar background colour (preserved) */
     section[data-testid="stSidebar"] {
         background: #ffffe0 !important;
     }
@@ -322,8 +319,7 @@ if "feature_names" not in st.session_state:
     st.session_state.feature_names = None
 if "training_done" not in st.session_state:
     st.session_state.training_done = False
-
-# ---------- New session state for clustering ----------
+# Clustering specific
 if "cluster_labels" not in st.session_state:
     st.session_state.cluster_labels = None
 if "cluster_metrics" not in st.session_state:
@@ -516,8 +512,8 @@ def login_page():
         st.markdown('<div class="back-button-container">', unsafe_allow_html=True)
         if st.button("← Back to Home", key="back_home"):
             go_to("front")
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>')
+        st.markdown('</div>')
 
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
@@ -526,7 +522,7 @@ def upload_page():
         st.markdown("""
         <div class="card">
         <h4>📁 Supported Data Format</h4>
-        <ul><li>CSV files only (.csv)</li><li>Structured tabular data</li><li>Numerical and categorical variables</li><li>Clear target column for supervised learning</li></ul>
+        <ul><li>CSV files only (.csv)</li><li>Structured tabular data</li><li>Numerical and categorical variables</li><li>Clear target column for supervised learning (not required for clustering)</li></ul>
         </div>
         """, unsafe_allow_html=True)
         uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
@@ -589,16 +585,15 @@ def upload_page():
             st.info("📂 No data loaded yet. Please upload a CSV file.")
     with col2:
         if st.session_state.data is not None:
-            st.markdown("### 📌 Define Target Column")
-            # Allow "Clustering" as a problem type (no target needed)
+            st.markdown("### 📌 Define Problem Type")
+            # Three options: Classification, Regression, Clustering
             problem_type = st.selectbox("Select problem type:", ["Classification", "Regression", "Clustering"])
             if problem_type == "Clustering":
-                target_col = None
                 st.info("Clustering is unsupervised – no target column required.")
                 if st.button("Set Clustering Task", type="primary", key="set_clustering"):
                     st.session_state.target_column = None
-                    st.session_state.problem_type = problem_type
-                    st.success(f"✅ Clustering task selected. No target column needed.")
+                    st.session_state.problem_type = "Clustering"
+                    st.success("✅ Clustering task selected. No target column needed.")
             else:
                 target_col = st.selectbox("Select the target column:", options=st.session_state.data.columns.tolist(), index=len(st.session_state.data.columns)-1)
                 if st.button("Set Target", type="primary", key="set_target"):
@@ -612,7 +607,6 @@ def cleaning_page():
     if st.session_state.data is None:
         st.warning("⚠️ Please upload data first.")
         return
-    # For clustering, we still allow cleaning but no target column needed
     target_col = st.session_state.target_column
     st.markdown('<h2 class="sub-header">🧹 Basic Data Cleaning</h2>', unsafe_allow_html=True)
     original_df = st.session_state.data
@@ -718,8 +712,9 @@ def eda_page():
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
 
+# ---------- Clustering training function ----------
 def clustering_training_page():
-    """Clustering using PyCaret's clustering module."""
+    """Train a clustering model using PyCaret's clustering module."""
     if st.session_state.data is None:
         st.warning("⚠️ Please upload data first.")
         return
@@ -753,9 +748,7 @@ def clustering_training_page():
     if st.button("🚀 Train Clustering Model", type="primary"):
         with st.spinner(f"Training {selected_model} clustering model..."):
             try:
-                # Prepare data: drop non-numeric columns? PyCaret handles automatically but we can preprocess
-                # For clustering, we must ignore any non-numeric columns; PyCaret's setup will handle them with encoding.
-                # However, we set ignore_low_variance=False and let PyCaret do its preprocessing.
+                # Setup PyCaret for clustering
                 setup_args = {
                     "data": df,
                     "normalize": normalize,
@@ -765,7 +758,6 @@ def clustering_training_page():
                     "verbose": False,
                     "log_experiment": False
                 }
-                # For clustering, setup does not require target column
                 clust_setup(**setup_args)
                 st.toast("PyCaret setup complete", icon="✅")
 
@@ -781,7 +773,6 @@ def clustering_training_page():
 
                 # Get metrics
                 metrics_df = clust_pull()
-                # Silhouette score is usually in the metrics table
                 silhouette = None
                 if metrics_df is not None and not metrics_df.empty:
                     if 'Silhouette' in metrics_df.columns:
@@ -794,9 +785,8 @@ def clustering_training_page():
                 st.session_state.clustering_model = model
                 st.session_state.training_complete = True
                 st.session_state.training_done = True
-                st.session_state.problem_type = "Clustering"  # Ensure it's set
+                st.session_state.problem_type = "Clustering"
 
-                # Store cluster metrics
                 st.session_state.cluster_metrics = {
                     "algorithm": selected_model,
                     "num_clusters": len(np.unique(cluster_labels)),
@@ -821,8 +811,9 @@ def clustering_training_page():
                 st.error(f"Clustering failed: {type(e).__name__}: {str(e)}")
                 st.exception(e)
 
+# ---------- Main training page (dispatcher) ----------
 def training_page():
-    # Branch to clustering if problem_type is Clustering
+    # Route to clustering if problem type is Clustering
     if st.session_state.problem_type == "Clustering":
         clustering_training_page()
         return
@@ -986,18 +977,18 @@ def evaluation_page():
         df = st.session_state.data.copy()
         df['Cluster'] = labels
 
-        # Silhouette score
-        from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
         # Use only numeric columns for metrics
         numeric_df = df.select_dtypes(include=[np.number])
         if numeric_df.shape[1] >= 2:
             try:
+                from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
                 sil_score = silhouette_score(numeric_df, labels)
                 ch_score = calinski_harabasz_score(numeric_df, labels)
                 db_score = davies_bouldin_score(numeric_df, labels)
-                st.metric("Silhouette Score", f"{sil_score:.4f}")
-                st.metric("Calinski-Harabasz Index", f"{ch_score:.2f}")
-                st.metric("Davies-Bouldin Index", f"{db_score:.4f}")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Silhouette Score", f"{sil_score:.4f}")
+                col2.metric("Calinski-Harabasz Index", f"{ch_score:.2f}")
+                col3.metric("Davies-Bouldin Index", f"{db_score:.4f}")
             except Exception as e:
                 st.warning(f"Could not compute clustering metrics: {e}")
         else:
@@ -1010,8 +1001,8 @@ def evaluation_page():
         st.plotly_chart(fig, use_container_width=True)
 
         # 2D PCA visualisation
-        from sklearn.decomposition import PCA
         if numeric_df.shape[1] >= 2:
+            from sklearn.decomposition import PCA
             pca = PCA(n_components=2)
             pca_result = pca.fit_transform(numeric_df)
             pca_df = pd.DataFrame(pca_result, columns=['PC1', 'PC2'])
@@ -1024,7 +1015,6 @@ def evaluation_page():
         # Show cluster assignments
         st.markdown("### Cluster Assignments (first 100 rows)")
         st.dataframe(df[['Cluster'] + [c for c in df.columns if c != 'Cluster']].head(100), use_container_width=True)
-
         return
 
     # ---------- Original evaluation for classification/regression ----------
@@ -1140,11 +1130,8 @@ def export_page():
     with col2:
         st.markdown("#### 📥 Download Predictions / Cluster Assignments")
         if st.session_state.problem_type == "Clustering" and st.session_state.cluster_labels is not None:
-            results_df = pd.DataFrame({"Cluster": st.session_state.cluster_labels})
-            # Also include original data if available
-            if st.session_state.data is not None:
-                results_df = st.session_state.data.copy()
-                results_df["Cluster"] = st.session_state.cluster_labels
+            results_df = st.session_state.data.copy()
+            results_df["Cluster"] = st.session_state.cluster_labels
             st.download_button(label="Download Cluster Assignments (CSV)", data=results_df.to_csv(index=False), file_name="cluster_assignments.csv", mime="text/csv", key="export_clusters")
         elif st.session_state.predictions is not None and st.session_state.test_labels is not None:
             results_df = pd.DataFrame({"Actual": st.session_state.test_labels, "Predicted": st.session_state.predictions})
@@ -1264,7 +1251,6 @@ def account_page():
 def dashboard_page():
     set_bg_image_local("purple.png")
     st.markdown(f"<h1 style='color: black;'>Welcome, {st.session_state.user_name}!</h1>", unsafe_allow_html=True)
-    # Sequential steps including Account at the end
     workflow_pages = ["data_upload", "data_cleaning", "eda", "model_training", "model_evaluation", "export_results", "account"]
     page_display = {
         "data_upload": "📁 Data Upload",
@@ -1277,7 +1263,6 @@ def dashboard_page():
     }
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/2103/2103832.png", width=100)
-        # Removed user name and email from sidebar as per requirement
         st.markdown("---")
         st.markdown("### Sequential Steps")
         if st.session_state.page in workflow_pages:
