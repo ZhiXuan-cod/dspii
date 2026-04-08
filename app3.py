@@ -20,13 +20,20 @@ warnings.filterwarnings('ignore')
 # ---------- Supabase import ----------
 from supabase import create_client
 
-# ---------- PyCaret imports ----------
+# ---------- PyCaret imports (including clustering) ----------
 try:
     from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, get_config, pull
     from pycaret.regression import setup as reg_setup, compare_models as reg_compare, predict_model as reg_predict
+    # New: clustering module
+    from pycaret.clustering import setup as clust_setup, create_model as clust_create, assign_model as clust_assign, get_config as clust_get_config, pull as clust_pull
     PYCARET_AVAILABLE = True
+    CLUSTERING_AVAILABLE = True
 except ImportError:
     PYCARET_AVAILABLE = False
+    CLUSTERING_AVAILABLE = False
+except Exception:
+    # In case pycaret.clustering exists but something else fails
+    CLUSTERING_AVAILABLE = False
 
 # ---------- Scipy for outlier detection ----------
 try:
@@ -316,6 +323,14 @@ if "feature_names" not in st.session_state:
 if "training_done" not in st.session_state:
     st.session_state.training_done = False
 
+# ---------- New session state for clustering ----------
+if "cluster_labels" not in st.session_state:
+    st.session_state.cluster_labels = None
+if "cluster_metrics" not in st.session_state:
+    st.session_state.cluster_metrics = None
+if "clustering_model" not in st.session_state:
+    st.session_state.clustering_model = None
+
 # ---------- Cleaning helper ----------
 def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
                     encode_option, scale_option, cols_to_drop, target_col):
@@ -575,22 +590,32 @@ def upload_page():
     with col2:
         if st.session_state.data is not None:
             st.markdown("### 📌 Define Target Column")
-            target_col = st.selectbox("Select the target column:", options=st.session_state.data.columns.tolist(), index=len(st.session_state.data.columns)-1)
-            problem_type = st.selectbox("Select problem type:", ["Classification", "Regression"])
-            if st.button("Set Target", type="primary", key="set_target"):
-                st.session_state.target_column = target_col
-                st.session_state.problem_type = problem_type
-                st.success(f"✅ Target set: {target_col} ({problem_type})")
+            # Allow "Clustering" as a problem type (no target needed)
+            problem_type = st.selectbox("Select problem type:", ["Classification", "Regression", "Clustering"])
+            if problem_type == "Clustering":
+                target_col = None
+                st.info("Clustering is unsupervised – no target column required.")
+                if st.button("Set Clustering Task", type="primary", key="set_clustering"):
+                    st.session_state.target_column = None
+                    st.session_state.problem_type = problem_type
+                    st.success(f"✅ Clustering task selected. No target column needed.")
+            else:
+                target_col = st.selectbox("Select the target column:", options=st.session_state.data.columns.tolist(), index=len(st.session_state.data.columns)-1)
+                if st.button("Set Target", type="primary", key="set_target"):
+                    st.session_state.target_column = target_col
+                    st.session_state.problem_type = problem_type
+                    st.success(f"✅ Target set: {target_col} ({problem_type})")
         else:
             st.info("Please upload data first.")
 
 def cleaning_page():
-    if st.session_state.data is None or st.session_state.target_column is None:
-        st.warning("⚠️ Please upload data and set target column first.")
+    if st.session_state.data is None:
+        st.warning("⚠️ Please upload data first.")
         return
+    # For clustering, we still allow cleaning but no target column needed
+    target_col = st.session_state.target_column
     st.markdown('<h2 class="sub-header">🧹 Basic Data Cleaning</h2>', unsafe_allow_html=True)
     original_df = st.session_state.data
-    target_col = st.session_state.target_column
     st.markdown("### Original Data Preview")
     st.dataframe(original_df.head())
     st.markdown(f"Shape: {original_df.shape}")
@@ -598,7 +623,7 @@ def cleaning_page():
         drop_duplicates = st.checkbox("Drop duplicate rows")
         missing_option = st.selectbox("Handle missing values", ["None", "Drop rows with any missing", "Drop columns with any missing", "Fill numeric with mean", "Fill numeric with median", "Fill categorical with mode"])
         outlier_option = st.selectbox("Handle outliers (numerical columns)", ["None", "Remove rows with Z-score > 3", "Cap at 1st and 99th percentile"])
-        cols_to_drop = st.multiselect("Select columns to drop", [c for c in original_df.columns if c != target_col])
+        cols_to_drop = st.multiselect("Select columns to drop", [c for c in original_df.columns if c != target_col] if target_col else original_df.columns.tolist())
         if st.button("🔍 Preview Cleaning", type="secondary", key="preview_cleaning"):
             cleaned = apply_cleaning(original_df, drop_duplicates, missing_option, outlier_option, encode_option="None", scale_option="None", cols_to_drop=cols_to_drop, target_col=target_col)
             st.markdown("### Cleaned Data Preview")
@@ -613,8 +638,8 @@ def cleaning_page():
             st.success("Data cleaned successfully!")
 
 def eda_page():
-    if st.session_state.data is None or st.session_state.target_column is None:
-        st.warning("⚠️ Please upload data and set target column first.")
+    if st.session_state.data is None:
+        st.warning("⚠️ Please upload data first.")
         return
     st.markdown('<h2 class="sub-header">🔍 Exploratory Data Analysis</h2>', unsafe_allow_html=True)
     df = st.session_state.data
@@ -693,7 +718,116 @@ def eda_page():
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
 
+def clustering_training_page():
+    """Clustering using PyCaret's clustering module."""
+    if st.session_state.data is None:
+        st.warning("⚠️ Please upload data first.")
+        return
+    if not PYCARET_AVAILABLE or not CLUSTERING_AVAILABLE:
+        st.error("PyCaret clustering module not available. Please install PyCaret (pip install pycaret) and ensure it includes clustering.")
+        return
+
+    st.markdown('<h2 class="sub-header">🎯 Automated Clustering (Unsupervised)</h2>', unsafe_allow_html=True)
+    df = st.session_state.data.copy()
+
+    st.markdown(f"""
+    <div class="card">
+    <h4>Clustering Configuration</h4>
+    <ul><li><strong>Dataset Shape:</strong> {df.shape}</li><li><strong>Unsupervised – no target column</strong></li></ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Clustering algorithm selection
+    model_list = ['kmeans', 'hclust', 'dbscan', 'birch', 'meanshift', 'optics']
+    selected_model = st.selectbox("Select clustering algorithm", model_list, index=0)
+    num_clusters = st.slider("Number of clusters (for k-means/hclust)", 2, 15, 3)
+    normalize = st.checkbox("Normalize data (recommended for distance-based algorithms)", value=True)
+
+    # Additional parameters for DBSCAN
+    eps = None
+    min_samples = None
+    if selected_model == 'dbscan':
+        eps = st.slider("Epsilon (eps) – neighbourhood radius", 0.1, 2.0, 0.5, 0.05)
+        min_samples = st.slider("Minimum samples per cluster", 2, 20, 5)
+
+    if st.button("🚀 Train Clustering Model", type="primary"):
+        with st.spinner(f"Training {selected_model} clustering model..."):
+            try:
+                # Prepare data: drop non-numeric columns? PyCaret handles automatically but we can preprocess
+                # For clustering, we must ignore any non-numeric columns; PyCaret's setup will handle them with encoding.
+                # However, we set ignore_low_variance=False and let PyCaret do its preprocessing.
+                setup_args = {
+                    "data": df,
+                    "normalize": normalize,
+                    "ignore_low_variance": False,
+                    "session_id": 42,
+                    "html": False,
+                    "verbose": False,
+                    "log_experiment": False
+                }
+                # For clustering, setup does not require target column
+                clust_setup(**setup_args)
+                st.toast("PyCaret setup complete", icon="✅")
+
+                # Create model
+                if selected_model == 'dbscan':
+                    model = clust_create(selected_model, eps=eps, min_samples=min_samples)
+                else:
+                    model = clust_create(selected_model, num_clusters=num_clusters)
+
+                # Assign clusters to data
+                assigned = clust_assign(model)
+                cluster_labels = assigned['Cluster'].values
+
+                # Get metrics
+                metrics_df = clust_pull()
+                # Silhouette score is usually in the metrics table
+                silhouette = None
+                if metrics_df is not None and not metrics_df.empty:
+                    if 'Silhouette' in metrics_df.columns:
+                        silhouette = metrics_df['Silhouette'].values[0]
+                    elif 'Silhouette Score' in metrics_df.columns:
+                        silhouette = metrics_df['Silhouette Score'].values[0]
+
+                # Store results
+                st.session_state.cluster_labels = cluster_labels
+                st.session_state.clustering_model = model
+                st.session_state.training_complete = True
+                st.session_state.training_done = True
+                st.session_state.problem_type = "Clustering"  # Ensure it's set
+
+                # Store cluster metrics
+                st.session_state.cluster_metrics = {
+                    "algorithm": selected_model,
+                    "num_clusters": len(np.unique(cluster_labels)),
+                    "silhouette_score": silhouette,
+                    "cluster_sizes": pd.Series(cluster_labels).value_counts().to_dict()
+                }
+
+                st.success("🎉 Clustering completed successfully!")
+                with st.expander("📊 Clustering Results", expanded=True):
+                    st.markdown("#### Model Information")
+                    st.code(str(model), language='python')
+                    if silhouette is not None:
+                        st.metric("Silhouette Score", f"{silhouette:.4f}")
+                    else:
+                        st.info("Silhouette score not available in metrics output.")
+                    st.markdown("#### Cluster Sizes")
+                    sizes_df = pd.DataFrame(list(st.session_state.cluster_metrics["cluster_sizes"].items()), columns=["Cluster", "Count"])
+                    fig = px.bar(sizes_df, x="Cluster", y="Count", title="Number of points per cluster")
+                    st.plotly_chart(fig, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Clustering failed: {type(e).__name__}: {str(e)}")
+                st.exception(e)
+
 def training_page():
+    # Branch to clustering if problem_type is Clustering
+    if st.session_state.problem_type == "Clustering":
+        clustering_training_page()
+        return
+
+    # Otherwise original classification/regression training
     if st.session_state.data is None or st.session_state.target_column is None:
         st.warning("⚠️ Please upload data and set target column first.")
         return
@@ -837,9 +971,63 @@ def training_page():
                 st.exception(e)
 
 def evaluation_page():
-    if not st.session_state.training_complete or st.session_state.model is None:
+    if not st.session_state.training_complete:
         st.warning("⚠️ No trained model found. Please go to 'Model Training' and train a model first.")
         return
+
+    # Clustering evaluation
+    if st.session_state.problem_type == "Clustering":
+        st.markdown('<h2 class="sub-header">📈 Clustering Performance Evaluation</h2>', unsafe_allow_html=True)
+        if st.session_state.cluster_labels is None:
+            st.error("❌ No clustering labels found. Please retrain the clustering model.")
+            return
+
+        labels = st.session_state.cluster_labels
+        df = st.session_state.data.copy()
+        df['Cluster'] = labels
+
+        # Silhouette score
+        from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+        # Use only numeric columns for metrics
+        numeric_df = df.select_dtypes(include=[np.number])
+        if numeric_df.shape[1] >= 2:
+            try:
+                sil_score = silhouette_score(numeric_df, labels)
+                ch_score = calinski_harabasz_score(numeric_df, labels)
+                db_score = davies_bouldin_score(numeric_df, labels)
+                st.metric("Silhouette Score", f"{sil_score:.4f}")
+                st.metric("Calinski-Harabasz Index", f"{ch_score:.2f}")
+                st.metric("Davies-Bouldin Index", f"{db_score:.4f}")
+            except Exception as e:
+                st.warning(f"Could not compute clustering metrics: {e}")
+        else:
+            st.info("Not enough numeric columns to compute clustering metrics.")
+
+        # Cluster distribution
+        st.markdown("### Cluster Distribution")
+        cluster_counts = pd.Series(labels).value_counts().sort_index()
+        fig = px.bar(x=cluster_counts.index, y=cluster_counts.values, labels={'x': 'Cluster', 'y': 'Count'}, title="Number of points per cluster")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 2D PCA visualisation
+        from sklearn.decomposition import PCA
+        if numeric_df.shape[1] >= 2:
+            pca = PCA(n_components=2)
+            pca_result = pca.fit_transform(numeric_df)
+            pca_df = pd.DataFrame(pca_result, columns=['PC1', 'PC2'])
+            pca_df['Cluster'] = labels.astype(str)
+            fig = px.scatter(pca_df, x='PC1', y='PC2', color='Cluster', title="PCA Projection of Clusters")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Need at least two numeric features for PCA visualisation.")
+
+        # Show cluster assignments
+        st.markdown("### Cluster Assignments (first 100 rows)")
+        st.dataframe(df[['Cluster'] + [c for c in df.columns if c != 'Cluster']].head(100), use_container_width=True)
+
+        return
+
+    # ---------- Original evaluation for classification/regression ----------
     st.markdown('<h2 class="sub-header">📈 Model Performance Evaluation</h2>', unsafe_allow_html=True)
     if st.session_state.predictions is None or st.session_state.test_labels is None:
         st.error("❌ Model predictions or test labels missing. Please retrain the model.")
@@ -945,23 +1133,55 @@ def export_page():
     with col1:
         st.markdown("#### 📊 Model Information")
         if st.button("Show Model Details", key="show_model_details"):
-            st.write("**Best Model:**", st.session_state.model)
+            if st.session_state.problem_type == "Clustering":
+                st.write("**Clustering Model:**", st.session_state.clustering_model)
+            else:
+                st.write("**Best Model:**", st.session_state.model)
     with col2:
-        st.markdown("#### 📥 Download Predictions")
-        if st.session_state.predictions is not None and st.session_state.test_labels is not None:
+        st.markdown("#### 📥 Download Predictions / Cluster Assignments")
+        if st.session_state.problem_type == "Clustering" and st.session_state.cluster_labels is not None:
+            results_df = pd.DataFrame({"Cluster": st.session_state.cluster_labels})
+            # Also include original data if available
+            if st.session_state.data is not None:
+                results_df = st.session_state.data.copy()
+                results_df["Cluster"] = st.session_state.cluster_labels
+            st.download_button(label="Download Cluster Assignments (CSV)", data=results_df.to_csv(index=False), file_name="cluster_assignments.csv", mime="text/csv", key="export_clusters")
+        elif st.session_state.predictions is not None and st.session_state.test_labels is not None:
             results_df = pd.DataFrame({"Actual": st.session_state.test_labels, "Predicted": st.session_state.predictions})
             st.download_button(label="Download Predictions (CSV)", data=results_df.to_csv(index=False), file_name="predictions.csv", mime="text/csv", key="export_predictions")
         else:
-            st.warning("No predictions available. Please retrain the model.")
+            st.warning("No predictions or cluster labels available. Please retrain the model.")
     st.markdown("#### 📄 Model Report")
     if st.button("Generate Model Report", key="generate_report"):
         if st.session_state.data is not None:
             dataset_shape = st.session_state.data.shape
-            feature_count = len(st.session_state.data.columns) - 1
+            feature_count = len(st.session_state.data.columns) - (1 if st.session_state.target_column else 0)
         else:
             dataset_shape = "N/A"
             feature_count = "N/A"
-        report_content = f"""
+        if st.session_state.problem_type == "Clustering":
+            report_content = f"""
+# Clustering Model Report
+
+## Project Information
+- Platform: No-Code ML Platform
+- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- Problem Type: Clustering (Unsupervised)
+- Algorithm: {st.session_state.cluster_metrics.get('algorithm', 'N/A') if st.session_state.cluster_metrics else 'N/A'}
+
+## Dataset Information
+- Original Shape: {dataset_shape}
+- Features used: {feature_count}
+
+## Clustering Results
+- Number of clusters: {st.session_state.cluster_metrics.get('num_clusters', 'N/A') if st.session_state.cluster_metrics else 'N/A'}
+- Silhouette Score: {st.session_state.cluster_metrics.get('silhouette_score', 'N/A') if st.session_state.cluster_metrics else 'N/A'}
+
+## Notes
+This clustering was generated using PyCaret AutoML through the No-Code ML Platform.
+"""
+        else:
+            report_content = f"""
 # Machine Learning Model Report
 
 ## Project Information
@@ -986,11 +1206,17 @@ This model was generated using PyCaret AutoML through the No-Code ML Platform.
         st.download_button("📥 Download Report (PDF)", data=pdf_bytes, file_name="ml_model_report.pdf", mime="application/pdf", key="download_pdf")
         st.download_button("📥 Download Report (Markdown)", data=report_content, file_name="ml_model_report.md", mime="text/markdown", key="download_md")
     st.markdown("### 📋 Session Information")
-    session_info = {"Data Loaded": st.session_state.data is not None, "Target Column": st.session_state.target_column, "Problem Type": st.session_state.problem_type, "Model Trained": st.session_state.training_complete, "Predictions Made": st.session_state.predictions is not None, "Test Labels Saved": st.session_state.test_labels is not None}
+    session_info = {
+        "Data Loaded": st.session_state.data is not None,
+        "Problem Type": st.session_state.problem_type,
+        "Target Column": st.session_state.target_column if st.session_state.target_column else "N/A (Clustering)",
+        "Model Trained": st.session_state.training_complete,
+        "Predictions/Clusters Available": (st.session_state.predictions is not None) or (st.session_state.cluster_labels is not None)
+    }
     session_df = pd.DataFrame.from_dict(session_info, orient='index', columns=['Status'])
     st.dataframe(session_df, use_container_width=True)
     if st.button("🔄 Start Over", type="secondary", key="start_over"):
-        keys_to_reset = ["data", "target_column", "problem_type", "model", "predictions", "test_labels", "training_complete", "cleaned_data", "feature_names", "training_done"]
+        keys_to_reset = ["data", "target_column", "problem_type", "model", "predictions", "test_labels", "training_complete", "cleaned_data", "feature_names", "training_done", "cluster_labels", "cluster_metrics", "clustering_model"]
         for key in keys_to_reset:
             if key in st.session_state:
                 st.session_state[key] = None
@@ -1069,7 +1295,7 @@ def dashboard_page():
             st.session_state.logged_in = False
             st.session_state.user_name = ""
             st.session_state.user_email = ""
-            keys_to_clear = ["data", "target_column", "problem_type", "model", "predictions", "test_labels", "training_complete", "cleaned_data", "feature_names", "training_done"]
+            keys_to_clear = ["data", "target_column", "problem_type", "model", "predictions", "test_labels", "training_complete", "cleaned_data", "feature_names", "training_done", "cluster_labels", "cluster_metrics", "clustering_model"]
             for key in keys_to_clear:
                 if key in st.session_state:
                     st.session_state[key] = None
