@@ -567,22 +567,25 @@ def front_page():
         box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         animation: fadeIn 1s ease-in-out;
         color: white;
-        height: 100%;  /* 确保 panel 填满列高 */
+        height: 100%;  /* 保持右侧 panel 填满列高 */
     }
     .right-panel h1 { text-shadow: 2px 2px 4px rgba(0,0,0,0.5); font-size: 3rem; margin-bottom: 1rem; }
     .right-panel p { text-shadow: 1px 1px 2px rgba(0,0,0,0.5); font-size: 1.2rem; opacity: 0.9; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-    /* 让视频容器填满列高 */
+    /* 视频容器：限制最大高度，垂直居中 */
     .video-container {
-        height: 100%;
         display: flex;
         align-items: center;
         justify-content: center;
+        max-height: 280px;   /* 调整这个值改变视频高度 */
+        height: auto;
+        margin: auto;
     }
     .video-container video {
         width: 100%;
-        height: 100%;
-        object-fit: contain;  /* 保持比例，不裁剪，完整显示 */
+        height: auto;
+        max-height: 280px;   /* 与容器一致，避免溢出 */
+        object-fit: contain;
     }
     </style>
     """, unsafe_allow_html=True)
