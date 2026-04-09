@@ -446,7 +446,17 @@ def is_clustering_possible(df, min_rows=10, min_numeric_features=2) -> Tuple[boo
     return True, "Suitable for clustering"
 
 # ---------- AutoML for Clustering (returns scaled data for visualization) ----------
-def auto_clustering(df, max_clusters=10):
+def auto_clustering(df, max_clusters=10, skip_hierarchical=False, skip_birch=False, skip_dbscan=False):
+    """
+    Automatically find best clustering algorithm and number of clusters.
+    
+    Parameters:
+    - df: DataFrame with numeric features only
+    - max_clusters: maximum number of clusters to try (for KMeans, Hierarchical, BIRCH)
+    - skip_hierarchical: if True, skip AgglomerativeClustering
+    - skip_birch: if True, skip BIRCH
+    - skip_dbscan: if True, skip DBSCAN
+    """
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(df.select_dtypes(include=[np.number]))
     
@@ -454,74 +464,73 @@ def auto_clustering(df, max_clusters=10):
     best_model = None
     best_labels = None
     best_name = None
-    results = []
     
-    # 1. KMeans
+    # 1. KMeans (always run)
     for k in range(2, min(max_clusters, len(df)-1)+1):
         km = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = km.fit_predict(X_scaled)
         if len(set(labels)) > 1:
             score = silhouette_score(X_scaled, labels)
-            results.append(("KMeans", k, score, km, labels))
             if score > best_score:
                 best_score = score
                 best_model = km
                 best_labels = labels
                 best_name = f"KMeans (k={k})"
     
-    # 2. Hierarchical
-    for linkage in ['ward', 'complete', 'average']:
-        try:
-            for k in range(2, min(max_clusters, len(df)-1)+1):
-                hc = AgglomerativeClustering(n_clusters=k, linkage=linkage)
-                labels = hc.fit_predict(X_scaled)
+    # 2. Hierarchical (optional)
+    if not skip_hierarchical:
+        for linkage in ['ward', 'complete', 'average']:
+            try:
+                for k in range(2, min(max_clusters, len(df)-1)+1):
+                    hc = AgglomerativeClustering(n_clusters=k, linkage=linkage)
+                    labels = hc.fit_predict(X_scaled)
+                    if len(set(labels)) > 1:
+                        score = silhouette_score(X_scaled, labels)
+                        if score > best_score:
+                            best_score = score
+                            best_model = hc
+                            best_labels = labels
+                            best_name = f"Agglomerative (k={k}, linkage={linkage})"
+            except Exception:
+                continue
+    
+    # 3. BIRCH (optional)
+    if not skip_birch:
+        for k in range(2, min(max_clusters, len(df)-1)+1):
+            try:
+                birch = Birch(n_clusters=k)
+                labels = birch.fit_predict(X_scaled)
                 if len(set(labels)) > 1:
                     score = silhouette_score(X_scaled, labels)
-                    results.append((f"Agglomerative({linkage})", k, score, hc, labels))
                     if score > best_score:
                         best_score = score
-                        best_model = hc
+                        best_model = birch
                         best_labels = labels
-                        best_name = f"Agglomerative (k={k}, linkage={linkage})"
-        except Exception:
-            continue
+                        best_name = f"BIRCH (k={k})"
+            except Exception:
+                continue
     
-    # 3. BIRCH
-    for k in range(2, min(max_clusters, len(df)-1)+1):
-        try:
-            birch = Birch(n_clusters=k)
-            labels = birch.fit_predict(X_scaled)
-            if len(set(labels)) > 1:
-                score = silhouette_score(X_scaled, labels)
-                results.append(("BIRCH", k, score, birch, labels))
-                if score > best_score:
-                    best_score = score
-                    best_model = birch
-                    best_labels = labels
-                    best_name = f"BIRCH (k={k})"
-        except Exception:
-            continue
+    # 4. DBSCAN (optional)
+    if not skip_dbscan:
+        eps_range = np.linspace(0.1, 1.5, 10)
+        for eps in eps_range:
+            try:
+                db = DBSCAN(eps=eps, min_samples=5)
+                labels = db.fit_predict(X_scaled)
+                n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+                if n_clusters >= 2:
+                    mask = labels != -1
+                    if mask.sum() >= 2:
+                        score = silhouette_score(X_scaled[mask], labels[mask])
+                        if score > best_score:
+                            best_score = score
+                            best_model = db
+                            best_labels = labels
+                            best_name = f"DBSCAN (eps={eps:.2f})"
+            except Exception:
+                continue
     
-    # 4. DBSCAN
-    eps_range = np.linspace(0.1, 1.5, 10)
-    for eps in eps_range:
-        try:
-            db = DBSCAN(eps=eps, min_samples=5)
-            labels = db.fit_predict(X_scaled)
-            n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-            if n_clusters >= 2:
-                mask = labels != -1
-                if mask.sum() >= 2:
-                    score = silhouette_score(X_scaled[mask], labels[mask])
-                    results.append(("DBSCAN", eps, score, db, labels))
-                    if score > best_score:
-                        best_score = score
-                        best_model = db
-                        best_labels = labels
-                        best_name = f"DBSCAN (eps={eps:.2f})"
-        except Exception:
-            continue
-    
+    # Fallback if nothing found
     if best_model is None:
         best_model = KMeans(n_clusters=2, random_state=42, n_init=10)
         best_labels = best_model.fit_predict(X_scaled)
@@ -1069,8 +1078,11 @@ def training_page():
                     if problem_type == "Classification":
                         _pycaret_setup_safe(clf_setup, **setup_args)
                         best_model = clf_compare(verbose=False, sort=sort_metric, include=include_models, n_select=1, fold=fold)
-                        # Fix: if compare_models returns a list, extract first element
+                        # Handle possible empty list or list of models
                         if isinstance(best_model, list):
+                            if len(best_model) == 0:
+                                st.error("❌ No models were returned by compare_models. Check your data (e.g., target column has too few unique values or data is empty).")
+                                return
                             best_model = best_model[0]
                         pred_df = clf_predict(best_model)
                         preds = pred_df['prediction_label'].values
@@ -1080,6 +1092,9 @@ def training_page():
                         _pycaret_setup_safe(reg_setup, **setup_args)
                         best_model = reg_compare(verbose=False, sort=sort_metric, include=include_models, n_select=1, fold=fold)
                         if isinstance(best_model, list):
+                            if len(best_model) == 0:
+                                st.error("❌ No models were returned by compare_models. Check your data (e.g., target column is constant or data has issues).")
+                                return
                             best_model = best_model[0]
                         pred_df = reg_predict(best_model)
                         preds = pred_df['prediction_label'].values
