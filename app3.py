@@ -709,10 +709,14 @@ def upload_page():
 
 def eda_page():
     if st.session_state.data is None:
-        st.warning("⚠️ Please upload data and set target column first.")
+        st.warning("⚠️ Please upload data first.")
         return
     st.markdown('<h2 class="sub-header">🔍 Exploratory Data Analysis</h2>', unsafe_allow_html=True)
     df = st.session_state.data
+    problem_type = st.session_state.problem_type
+    target_col = st.session_state.target_column
+
+    # Basic dataset info
     info_col1, info_col2, info_col3, info_col4 = st.columns(4)
     with info_col1:
         st.metric("Rows", len(df))
@@ -724,21 +728,15 @@ def eda_page():
     with info_col4:
         memory = df.memory_usage(deep=True).sum() / 1024**2
         st.metric("Memory (MB)", f"{memory:.2f}")
+
+    # Data types overview
     st.markdown("### 🔍 Data Types")
     dtype_counts = df.dtypes.value_counts()
     dtype_df = pd.DataFrame({'Data Type': dtype_counts.index.astype(str), 'Count': dtype_counts.values})
     fig = px.pie(dtype_df, values='Count', names='Data Type', title="Distribution of Data Types")
     st.plotly_chart(fig, use_container_width=True)
-    st.markdown("### ⚠️ Missing Values Analysis")
-    missing_series = df.isnull().sum()
-    missing_df = pd.DataFrame({'Column': missing_series.index, 'Missing_Count': missing_series.values, 'Missing_Percentage': (missing_series.values / len(df)) * 100}).sort_values('Missing_Percentage', ascending=False)
-    missing_df = missing_df[missing_df['Missing_Count'] > 0]
-    if len(missing_df) > 0:
-        fig = px.bar(missing_df, x='Column', y='Missing_Percentage', title="Missing Values by Column (%)", color='Missing_Percentage')
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(missing_df, width='stretch')
-    else:
-        st.success("✅ No missing values found!")
+
+    # Numerical columns analysis
     numerical_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     if numerical_cols:
         st.markdown("### 📊 Numerical Columns Analysis")
@@ -753,6 +751,8 @@ def eda_page():
                 st.plotly_chart(fig, use_container_width=True)
             col_stats = df[selected_num_col].describe()
             st.dataframe(col_stats, width='stretch')
+
+    # Categorical columns analysis
     categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
     if categorical_cols:
         st.markdown("### 📊 Categorical Columns Analysis")
@@ -766,19 +766,20 @@ def eda_page():
             with col2:
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title=f"Distribution of {selected_cat_col}")
                 st.plotly_chart(fig, use_container_width=True)
+
+    # Correlation matrix for numerical columns
     if len(numerical_cols) > 1:
         st.markdown("### 🔗 Correlation Matrix")
         corr_matrix = df[numerical_cols].corr()
         fig = px.imshow(corr_matrix, labels=dict(color="Correlation"), x=corr_matrix.columns, y=corr_matrix.columns, title="Correlation Heatmap")
         fig.update_layout(width=800, height=600)
         st.plotly_chart(fig, use_container_width=True)
-    if st.session_state.target_column and st.session_state.target_column in df.columns:
-        st.markdown(f"### 🎯 Analysis of Target: {st.session_state.target_column}")
-        target_col = st.session_state.target_column
-        if df[target_col].dtype in ['int64', 'float64']:
-            fig = px.histogram(df, x=target_col, title=f"Distribution of Target ({target_col})")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
+
+    # Problem‑specific analysis
+    if problem_type == "Classification" and target_col and target_col in df.columns:
+        st.markdown(f"### 🎯 Classification Target Analysis: {target_col}")
+        if df[target_col].dtype in ['int64', 'float64'] and df[target_col].nunique() <= 20:
+            # Treat as categorical even if numeric
             value_counts = df[target_col].value_counts()
             col1, col2 = st.columns(2)
             with col1:
@@ -787,6 +788,42 @@ def eda_page():
             with col2:
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
+        elif df[target_col].dtype == 'object':
+            value_counts = df[target_col].value_counts()
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.bar(x=value_counts.index, y=value_counts.values, title="Class Distribution")
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info(f"Target column '{target_col}' has {df[target_col].nunique()} unique values. It might be more suitable for regression.")
+
+    elif problem_type == "Regression" and target_col and target_col in df.columns:
+        st.markdown(f"### 🎯 Regression Target Analysis: {target_col}")
+        if pd.api.types.is_numeric_dtype(df[target_col]):
+            fig = px.histogram(df, x=target_col, title=f"Distribution of Target ({target_col})", nbins=50)
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(df[target_col].describe(), width='stretch')
+        else:
+            st.warning(f"Target column '{target_col}' is not numeric. Regression may not be appropriate.")
+
+    elif problem_type == "Clustering":
+        st.markdown("### 🧩 Clustering-specific Analysis")
+        st.info("Clustering is unsupervised. Below are feature relationships and dimensionality reduction visualizations.")
+        if len(numerical_cols) >= 2:
+            # PCA plot of all numerical data
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(df[numerical_cols])
+            pca = PCA(n_components=2)
+            pca_result = pca.fit_transform(X_scaled)
+            pca_df = pd.DataFrame(pca_result, columns=['PC1', 'PC2'])
+            fig = px.scatter(pca_df, x='PC1', y='PC2', title="PCA Projection of Numerical Features")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Need at least 2 numerical features for PCA projection.")
 
 def clustering_training_page():
     """Clustering training page with user-selectable search scope."""
@@ -800,9 +837,9 @@ def clustering_training_page():
         st.error("Clustering requires at least 2 numeric features. Current numeric features insufficient.")
         return
     
-    # Speed mode selection
+    # Speed mode selection (kept as is, user did not ask to remove)
     cluster_mode = st.radio(
-        "⚡ Clustering Search Mode",
+        "⚡️ Clustering Search Mode",
         options=["Fast (KMeans only, k≤5)", "Standard (KMeans + Hierarchical)", "Full (try all algorithms)"],
         index=1,
         help="Fast: a few seconds. Standard: includes KMeans and Agglomerative. Full: also BIRCH and DBSCAN (slower)."
@@ -882,7 +919,7 @@ def clustering_training_page():
                 st.exception(e)
 
 def training_page():
-    """Model training with full auto fallback – never shows an error."""
+    """Model training with full auto fallback – no speed mode selector, fast by default."""
     if st.session_state.problem_type == "Clustering":
         clustering_training_page()
         return
@@ -907,26 +944,19 @@ def training_page():
         st.error(f"Target column '{target_col}' must be numeric for regression.")
         return
     
-    # Speed mode selection (still offered, but will auto fallback)
-    train_mode = st.radio(
-        "⚡ Training Speed Mode",
-        options=["Fast (few seconds)", "Standard (1-2 min)", "Full (slower, best)"],
-        index=1,
-        help="Fast: RandomForest only, 3‑fold. Standard: 5 models, 5‑fold. Full: all models, 10‑fold. If PyCaret fails, auto fallback to RandomForest."
-    )
-    
+    # Removed speed mode radio; use fast default settings
     st.markdown(f"""
     <div class="card">
-    <h4>AutoML Configuration</h4>
+    <h4>AutoML Configuration (Fast Default)</h4>
     <ul><li><strong>Problem Type:</strong> {problem_type}</li>
     <li><strong>Target Column:</strong> {target_col}</li>
     <li><strong>Dataset Shape:</strong> {df.shape}</li>
-    <li><strong>Speed Mode:</strong> {train_mode}</li></ul>
+    <li><strong>Search Strategy:</strong> 3‑fold CV, limited to fast models (RandomForest, LightGBM, etc.)</li></ul>
     </div>
     """, unsafe_allow_html=True)
     
     if st.button("🚀 Run AutoML Training", type="primary"):
-        with st.spinner("Training... (auto fallback enabled)"):
+        with st.spinner("Training with fast default settings..."):
             try:
                 trained = False
                 model = None
@@ -936,24 +966,15 @@ def training_page():
                 # ---- Try PyCaret first if available ----
                 if PYCARET_AVAILABLE:
                     try:
-                        # Set parameters based on mode
-                        if train_mode == "Fast (few seconds)":
-                            fold = 3
-                            include_models = ['rf']   # RandomForest only
-                        elif train_mode == "Standard (1-2 min)":
-                            fold = 5
-                            if problem_type == "Classification":
-                                include_models = ['lr', 'rf', 'xgboost', 'lightgbm', 'dt']
-                            else:
-                                include_models = ['lr', 'rf', 'lightgbm', 'dt', 'et']
-                        else:  # Full mode
-                            fold = 10
-                            include_models = None  # all models
+                        # Use fast settings: fold=3, limited models
+                        fold = 3
+                        if problem_type == "Classification":
+                            include_models = ['lr', 'rf', 'lightgbm']   # logistic regression, random forest, lightgbm
+                        else:  # Regression
+                            include_models = ['lr', 'rf', 'lightgbm']   # linear regression, random forest, lightgbm
                         
                         sort_metric = 'Accuracy' if problem_type == 'Classification' else 'R2'
                         
-                        # Setup with auto-preprocess (let PyCaret handle everything)
-                        # Note: fold is NOT passed to setup; it's only for compare_models
                         setup_args = {
                             "data": df,
                             "target": target_col,
@@ -963,13 +984,12 @@ def training_page():
                             "log_experiment": False,
                             "n_jobs": -1,
                             "html": False,
-                            "preprocess": True,   # Auto preprocessing: impute, encode, scale
+                            "preprocess": True,
                         }
                         
                         if problem_type == "Classification":
                             _pycaret_setup_safe(clf_setup, **setup_args)
                             best_model = clf_compare(verbose=False, sort=sort_metric, include=include_models, n_select=1, fold=fold)
-                            # Handle case where compare_models returns None or empty list
                             if best_model is None or (isinstance(best_model, list) and len(best_model) == 0):
                                 raise ValueError("compare_models returned no model")
                             if isinstance(best_model, list):
@@ -978,7 +998,7 @@ def training_page():
                             preds = pred_df['prediction_label'].values
                             y_true = pred_df[target_col].values
                             st.session_state.feature_names = clf_get_config('X_train').columns.tolist()
-                        else:  # Regression
+                        else:
                             _pycaret_setup_safe(reg_setup, **setup_args)
                             best_model = reg_compare(verbose=False, sort=sort_metric, include=include_models, n_select=1, fold=fold)
                             if best_model is None or (isinstance(best_model, list) and len(best_model) == 0):
@@ -992,18 +1012,16 @@ def training_page():
                         
                         model = best_model
                         trained = True
-                        st.success("✅ AutoML training completed with PyCaret!")
+                        st.success("✅ AutoML training completed with PyCaret (fast mode)!")
                     except Exception as pycaret_error:
                         st.warning(f"⚠️ PyCaret training failed: {pycaret_error}. Falling back to scikit-learn (RandomForest).")
-                        # Fall through to fallback
                         trained = False
                 
-                # ---- Fallback to scikit-learn if PyCaret not available or failed ----
+                # ---- Fallback to scikit-learn ----
                 if not trained:
                     model, preds, y_true = train_fallback_model(df, target_col, problem_type)
                     st.info("ℹ️ Used scikit-learn RandomForest (fallback).")
                 
-                # Store results
                 st.session_state.model = model
                 st.session_state.predictions = preds
                 st.session_state.test_labels = y_true
