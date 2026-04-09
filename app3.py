@@ -25,14 +25,14 @@ warnings.filterwarnings('ignore')
 # ---------- Supabase import ----------
 from supabase import create_client
 
-# ---------- PyCaret imports (optional, for classification/regression AutoML) ----------
+# ---------- PyCaret imports (optional) ----------
 try:
     from pycaret.classification import setup as clf_setup, compare_models as clf_compare, predict_model as clf_predict, get_config, pull
     from pycaret.regression import setup as reg_setup, compare_models as reg_compare, predict_model as reg_predict
     PYCARET_AVAILABLE = True
 except ImportError:
     PYCARET_AVAILABLE = False
-    st.warning("⚠️ PyCaret not installed. Classification/Regression will use scikit-learn fallback (still automated).")
+    st.warning("⚠️ PyCaret not installed. Classification/Regression will use scikit-learn fallback.")
 
 # ---------- Scipy for outlier detection ----------
 try:
@@ -41,7 +41,7 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
 
-# ---------- PDF generator (minimal) ----------
+# ---------- PDF generator ----------
 def _pdf_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
@@ -245,7 +245,7 @@ def go_to(page: str):
 st.set_page_config(
     page_title="No-Code ML Platform",
     page_icon="💻",
-    layout="wide",  # 使用宽布局
+    layout="wide",                      # full width layout
     initial_sidebar_state="collapsed"
 )
 
@@ -431,24 +431,20 @@ def is_regression_possible(df) -> Tuple[bool, List[str]]:
 
 def is_clustering_possible(df, min_rows=10, min_numeric_features=2) -> Tuple[bool, str]:
     if len(df) < min_rows:
-        return False, f"数据行数不足 {min_rows} 行（当前 {len(df)} 行）"
+        return False, f"Data rows insufficient: need at least {min_rows} (currently {len(df)})"
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     if len(numeric_cols) < min_numeric_features:
-        return False, f"数值特征不足 {min_numeric_features} 个（当前 {len(numeric_cols)} 个）"
+        return False, f"Numeric features insufficient: need at least {min_numeric_features} (currently {len(numeric_cols)})"
     constant_cols = []
     for col in numeric_cols:
         if df[col].var() == 0:
             constant_cols.append(col)
     if constant_cols:
-        return False, f"存在常数数值特征: {', '.join(constant_cols[:3])}"
-    return True, "适合聚类"
+        return False, f"Constant numeric features: {', '.join(constant_cols[:3])}"
+    return True, "Suitable for clustering"
 
 # ---------- AutoML for Clustering ----------
 def auto_clustering(df, max_clusters=10):
-    """
-    自动尝试多种聚类算法，选择轮廓系数最高的模型。
-    返回: (best_model, best_labels, best_algorithm_name, best_score, metrics_dict)
-    """
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(df.select_dtypes(include=[np.number]))
     
@@ -471,7 +467,7 @@ def auto_clustering(df, max_clusters=10):
                 best_labels = labels
                 best_name = f"KMeans (k={k})"
     
-    # 2. 层次聚类
+    # 2. Hierarchical
     for linkage in ['ward', 'complete', 'average']:
         try:
             for k in range(2, min(max_clusters, len(df)-1)+1):
@@ -540,7 +536,7 @@ def auto_clustering(df, max_clusters=10):
     }
     return best_model, best_labels, best_name, best_score, metrics
 
-# ---------- Fallback training for classification/regression ----------
+# ---------- Fallback training ----------
 def train_fallback_model(df, target_col, problem_type):
     X = df.drop(columns=[target_col])
     y = df[target_col]
@@ -650,11 +646,10 @@ def login_page():
         st.markdown('</div>')
         st.markdown('</div>')
 
-# ==================== 修改后的 upload_page ====================
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     
-    # 1. 文件上传
+    # 1. File upload
     uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
     if uploaded_file is not None:
         encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
@@ -680,7 +675,7 @@ def upload_page():
     if st.session_state.data is not None:
         df = st.session_state.data
         
-        # 2. 检测任务适用性
+        # 2. Detect suitable tasks
         class_possible, class_candidates = is_classification_possible(df)
         reg_possible, reg_candidates = is_regression_possible(df)
         clust_possible, clust_msg = is_clustering_possible(df)
@@ -719,7 +714,7 @@ def upload_page():
                 st.write("None detected")
         st.markdown("---")
         
-        # 5. 📌 Define Problem Type (只显示 available_tasks)
+        # 5. 📌 Define Problem Type (only suitable tasks shown)
         st.markdown("### 📌 Define Problem Type")
         problem_type = st.selectbox("Select problem type:", available_tasks)
         
@@ -730,7 +725,6 @@ def upload_page():
                 st.session_state.problem_type = "Clustering"
                 st.success("✅ Clustering task selected. Proceed to Model Training for AutoML.")
         else:
-            # 根据任务选择合适的目标候选列
             if problem_type == "Classification":
                 candidates = class_candidates
             else:
@@ -740,7 +734,6 @@ def upload_page():
                 return
             target_col = st.selectbox(f"Select target column for {problem_type}:", candidates)
             if st.button("Set Target", type="primary", key="set_target"):
-                # 简单验证
                 if problem_type == "Classification" and df[target_col].nunique() > 50:
                     st.warning(f"⚠️ Target column '{target_col}' has {df[target_col].nunique()} unique values. Classification may be difficult.")
                 elif problem_type == "Regression" and not np.issubdtype(df[target_col].dtype, np.number):
@@ -752,18 +745,17 @@ def upload_page():
         
         st.markdown("---")
         
-        # 6. Data Preview
+        # 6. Data Preview (moved to bottom)
         st.markdown("### Data Preview")
         st.dataframe(df.head(), use_container_width=True)
         
-        # 7. Basic Data Statistics (折叠)
+        # 7. Basic Data Statistics (collapsible, at bottom)
         with st.expander("📊 Basic Data Statistics"):
             st.write("**Shape:**", df.shape)
             col_types = pd.DataFrame({'Column': df.columns, 'Type': df.dtypes.astype(str), 'Missing Values': df.isnull().sum(), 'Unique Values': df.nunique()})
             st.dataframe(col_types, use_container_width=True)
     else:
         st.info("📂 No data loaded yet. Please upload a CSV file.")
-# ============================================================
 
 def cleaning_page():
     if st.session_state.data is None:
@@ -882,7 +874,7 @@ def clustering_training_page():
     df = st.session_state.data.copy()
     numeric_df = df.select_dtypes(include=[np.number])
     if numeric_df.shape[1] < 2:
-        st.error("聚类需要至少2个数值特征。当前数值特征不足，无法进行聚类。")
+        st.error("Clustering requires at least 2 numeric features. Current numeric features insufficient.")
         return
     st.markdown(f"""
     <div class="card">
