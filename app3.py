@@ -516,7 +516,6 @@ def login_page():
         st.markdown('</div>')
         st.markdown('</div>')
 
-# ---------- ENHANCED UPLOAD PAGE WITH AUTO DETECTION ----------
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     col1, col2 = st.columns([2, 1])
@@ -556,8 +555,6 @@ def upload_page():
                 st.write("**Shape:**", df.shape)
                 col_types = pd.DataFrame({'Column': df.columns, 'Type': df.dtypes.astype(str), 'Missing Values': df.isnull().sum(), 'Unique Values': df.nunique()})
                 st.dataframe(col_types, use_container_width=True)
-
-            # --- Auto-detection of problem type ---
             classification_candidates = []
             regression_candidates = []
             for col in df.columns:
@@ -570,27 +567,27 @@ def upload_page():
                         classification_candidates.append(col)
                     else:
                         regression_candidates.append(col)
-
-            # Decide recommended problem type
-            recommended = "Clustering"
-            if classification_candidates and regression_candidates:
-                recommended = "Classification"   # or could be Regression, but Classification is often first choice
-            elif classification_candidates:
-                recommended = "Classification"
-            elif regression_candidates:
-                recommended = "Regression"
-            # else keep Clustering
-
-            st.markdown("### 🎯 Auto‑detected Task Suggestion")
-            st.info(f"✨ Based on your data, we recommend **{recommended}**. You can change the task below.")
-
+            st.markdown("### 🎯 Detected Target Candidates")
+            col1a, col2a = st.columns(2)
+            with col1a:
+                st.markdown("**Classification Targets**")
+                if classification_candidates:
+                    st.write(", ".join(classification_candidates))
+                else:
+                    st.write("None detected")
+            with col2a:
+                st.markdown("**Regression Targets**")
+                if regression_candidates:
+                    st.write(", ".join(regression_candidates))
+                else:
+                    st.write("None detected")
             st.markdown("---")
+        else:
+            st.info("📂 No data loaded yet. Please upload a CSV file.")
+    with col2:
+        if st.session_state.data is not None:
             st.markdown("### 📌 Define Problem Type")
-            # Problem type selection with default = recommended
-            problem_type_options = ["Classification", "Regression", "Clustering"]
-            default_idx = problem_type_options.index(recommended) if recommended in problem_type_options else 0
-            problem_type = st.selectbox("Select problem type:", problem_type_options, index=default_idx)
-
+            problem_type = st.selectbox("Select problem type:", ["Classification", "Regression", "Clustering"])
             if problem_type == "Clustering":
                 st.info("Clustering is unsupervised – no target column required.")
                 if st.button("Set Clustering Task", type="primary", key="set_clustering"):
@@ -598,53 +595,11 @@ def upload_page():
                     st.session_state.problem_type = "Clustering"
                     st.success("✅ Clustering task selected. No target column needed.")
             else:
-                # For Classification/Regression, filter suitable target columns
-                if problem_type == "Classification":
-                    suitable_targets = [col for col in df.columns if
-                                        (df[col].dtype in ['object', 'category']) or
-                                        (np.issubdtype(df[col].dtype, np.number) and df[col].nunique() < 20)]
-                    if not suitable_targets:
-                        st.warning("⚠️ No columns are clearly suitable for classification (categorical or low‑cardinality numeric). You can still select any column, but results may be poor.")
-                        suitable_targets = df.columns.tolist()
-                else:  # Regression
-                    suitable_targets = [col for col in df.columns if np.issubdtype(df[col].dtype, np.number)]
-                    if not suitable_targets:
-                        st.warning("⚠️ No numeric columns found. Regression requires a numeric target.")
-                        suitable_targets = df.columns.tolist()
-
-                target_col = st.selectbox("Select the target column:", options=suitable_targets,
-                                          index=len(suitable_targets)-1 if suitable_targets else 0)
+                target_col = st.selectbox("Select the target column:", options=st.session_state.data.columns.tolist(), index=len(st.session_state.data.columns)-1)
                 if st.button("Set Target", type="primary", key="set_target"):
-                    # Additional validation
-                    if problem_type == "Classification" and df[target_col].dtype not in ['object', 'category'] and df[target_col].nunique() >= 20:
-                        st.warning(f"Column '{target_col}' has {df[target_col].nunique()} unique values. Classification may be difficult. Consider Regression instead.")
-                    elif problem_type == "Regression" and not np.issubdtype(df[target_col].dtype, np.number):
-                        st.error(f"Column '{target_col}' is not numeric. Regression requires a numeric target. Please select a numeric column or change problem type to Classification.")
-                        return
                     st.session_state.target_column = target_col
                     st.session_state.problem_type = problem_type
                     st.success(f"✅ Target set: {target_col} ({problem_type})")
-        else:
-            st.info("📂 No data loaded yet. Please upload a CSV file.")
-    with col2:
-        if st.session_state.data is not None:
-            # Display candidate lists for transparency
-            st.markdown("### 🔍 Detected Target Candidates")
-            col1a, col2a = st.columns(2)
-            with col1a:
-                st.markdown("**Classification Candidates**")
-                if classification_candidates:
-                    st.write(", ".join(classification_candidates))
-                else:
-                    st.write("None detected")
-            with col2a:
-                st.markdown("**Regression Candidates**")
-                if regression_candidates:
-                    st.write(", ".join(regression_candidates))
-                else:
-                    st.write("None detected")
-            st.markdown("---")
-            st.caption("💡 Tip: If no target column is suitable, try **Clustering** for unsupervised learning.")
         else:
             st.info("Please upload data first.")
 
@@ -757,7 +712,7 @@ def eda_page():
                 fig = px.pie(names=value_counts.index, values=value_counts.values, title="Class Proportions")
                 st.plotly_chart(fig, use_container_width=True)
 
-# ---------- Clustering training function ----------
+# ---------- Clustering training function (FIXED: removed ignore_low_variance) ----------
 def clustering_training_page():
     """Train a clustering model using PyCaret's clustering module."""
     if st.session_state.data is None:
@@ -793,13 +748,11 @@ def clustering_training_page():
     if st.button("🚀 Train Clustering Model", type="primary"):
         with st.spinner(f"Training {selected_model} clustering model..."):
             try:
-                # Setup PyCaret for clustering
+                # ✅ FIX: removed 'ignore_low_variance' and 'html' – they are not accepted by clust_setup
                 setup_args = {
                     "data": df,
                     "normalize": normalize,
-                    "ignore_low_variance": False,
                     "session_id": 42,
-                    "html": False,
                     "verbose": False,
                     "log_experiment": False
                 }
