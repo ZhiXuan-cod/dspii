@@ -567,10 +567,23 @@ def front_page():
         box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         animation: fadeIn 1s ease-in-out;
         color: white;
+        height: 100%;  /* 确保 panel 填满列高 */
     }
     .right-panel h1 { text-shadow: 2px 2px 4px rgba(0,0,0,0.5); font-size: 3rem; margin-bottom: 1rem; }
     .right-panel p { text-shadow: 1px 1px 2px rgba(0,0,0,0.5); font-size: 1.2rem; opacity: 0.9; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    /* 让视频容器填满列高 */
+    .video-container {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .video-container video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;  /* 保持比例，不裁剪，完整显示 */
+    }
     </style>
     """, unsafe_allow_html=True)
     col1, col2 = st.columns([1.2, 1.8])
@@ -580,7 +593,13 @@ def front_page():
             with open(video_path, "rb") as f:
                 video_bytes = f.read()
             video_base64 = base64.b64encode(video_bytes).decode()
-            video_html = f'<video width="100%" autoplay loop muted playsinline><source src="data:video/mp4;base64,{video_base64}" type="video/mp4"></video>'
+            video_html = f'''
+            <div class="video-container">
+                <video autoplay loop muted playsinline>
+                    <source src="data:video/mp4;base64,{video_base64}" type="video/mp4">
+                </video>
+            </div>
+            '''
             st.markdown(video_html, unsafe_allow_html=True)
         else:
             st.markdown('<div style="background: rgba(255,255,255,0.2); border-radius: 10px; padding: 2rem; text-align: center;"><span style="font-size: 3rem;">📹</span><p style="color: white;">Video not found. Please add animation.mp4</p></div>', unsafe_allow_html=True)
