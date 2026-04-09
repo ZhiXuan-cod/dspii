@@ -649,7 +649,7 @@ def login_page():
 def upload_page():
     st.markdown('<h2 class="sub-header">📁 Upload Your Dataset</h2>', unsafe_allow_html=True)
     
-    # 1. File upload (full width)
+    # ----- 1. File upload (full width) -----
     uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
     if uploaded_file is not None:
         encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
@@ -675,7 +675,7 @@ def upload_page():
     if st.session_state.data is not None:
         df = st.session_state.data
         
-        # Detect suitable tasks
+        # ----- Detect suitable tasks -----
         class_possible, class_candidates = is_classification_possible(df)
         reg_possible, reg_candidates = is_regression_possible(df)
         clust_possible, clust_msg = is_clustering_possible(df)
@@ -688,17 +688,17 @@ def upload_page():
         if clust_possible:
             available_tasks.append("Clustering")
         
-        # 2. 🎯 Auto‑detected Task Suggestion (bullet list)
+        # ----- 2. 🎯 Auto‑detected Task Suggestion (bullet list) -----
         st.markdown("### 🎯 Auto‑detected Task Suggestion")
         if available_tasks:
-            # Create a bullet list of suitable tasks
-            task_list = "\n".join([f"- ✅ **{task}**" for task in available_tasks])
-            st.info(f"**This dataset is suitable for:**\n{task_list}")
+            # Build a bullet list of all suitable tasks
+            bullet_list = "\n".join([f"- ✅ **{task}**" for task in available_tasks])
+            st.info(f"**This dataset is suitable for:**\n{bullet_list}")
         else:
             st.error("❌ No machine learning task is possible with this dataset. Please upload another CSV.")
             return
         
-        # 3. 🔍 Detected Target Candidates
+        # ----- 3. 🔍 Detected Target Candidates -----
         st.markdown("### 🔍 Detected Target Candidates")
         col1a, col2a = st.columns(2)
         with col1a:
@@ -715,7 +715,7 @@ def upload_page():
                 st.write("None detected")
         st.markdown("---")
         
-        # 4. 📌 Define Problem Type (only suitable tasks shown)
+        # ----- 4. 📌 Define Problem Type (only suitable tasks shown) -----
         st.markdown("### 📌 Define Problem Type")
         problem_type = st.selectbox("Select problem type:", available_tasks)
         
@@ -746,11 +746,11 @@ def upload_page():
         
         st.markdown("---")
         
-        # 5. Data Preview (full width)
+        # ----- 5. Data Preview (moved to bottom, full width) -----
         st.markdown("### Data Preview")
         st.dataframe(df.head(), use_container_width=True)
         
-        # 6. Basic Data Statistics (collapsible, at bottom)
+        # ----- 6. Basic Data Statistics (collapsible, at bottom) -----
         with st.expander("📊 Basic Data Statistics"):
             st.write("**Shape:**", df.shape)
             col_types = pd.DataFrame({
