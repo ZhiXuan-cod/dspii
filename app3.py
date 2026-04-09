@@ -315,7 +315,7 @@ if "cluster_metrics" not in st.session_state:
 if "clustering_model" not in st.session_state:
     st.session_state.clustering_model = None
 if "clustering_scaler" not in st.session_state:
-    st.session_state.clustering_scaler = None   # ADDED for consistent scaling
+    st.session_state.clustering_scaler = None
 
 # ---------- Cleaning helper ----------
 def apply_cleaning(df, drop_duplicates, missing_option, outlier_option,
@@ -445,7 +445,7 @@ def is_clustering_possible(df, min_rows=10, min_numeric_features=2) -> Tuple[boo
         return False, f"Constant numeric features: {', '.join(constant_cols[:3])}"
     return True, "Suitable for clustering"
 
-# ---------- AutoML for Clustering (UPDATED: returns scaler) ----------
+# ---------- AutoML for Clustering ----------
 def auto_clustering(df, max_clusters=10):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(df.select_dtypes(include=[np.number]))
@@ -536,7 +536,7 @@ def auto_clustering(df, max_clusters=10):
         "algorithm": best_name,
         "cluster_sizes": pd.Series(best_labels).value_counts().to_dict()
     }
-    return best_model, best_labels, best_name, best_score, metrics, scaler   # <-- scaler added
+    return best_model, best_labels, best_name, best_score, metrics, scaler
 
 # ---------- Fallback training ----------
 def train_fallback_model(df, target_col, problem_type):
@@ -763,7 +763,7 @@ def upload_page():
         
         st.markdown("---")
         st.markdown("### Data Preview")
-        st.dataframe(df.head(), use_container_width=True)
+        st.dataframe(df.head(), width='stretch')
         
         with st.expander("📊 Basic Data Statistics"):
             st.write("**Shape:**", df.shape)
@@ -773,7 +773,7 @@ def upload_page():
                 'Missing Values': df.isnull().sum(),
                 'Unique Values': df.nunique()
             })
-            st.dataframe(col_types, use_container_width=True)
+            st.dataframe(col_types, width='stretch')
     else:
         st.info("📂 No data loaded yet. Please upload a CSV file.")
 
@@ -785,7 +785,7 @@ def cleaning_page():
     st.markdown('<h2 class="sub-header">🧹 Basic Data Cleaning</h2>', unsafe_allow_html=True)
     original_df = st.session_state.data
     st.markdown("### Original Data Preview")
-    st.dataframe(original_df.head())
+    st.dataframe(original_df.head(), width='stretch')
     st.markdown(f"Shape: {original_df.shape}")
     with st.expander("Basic Cleaning Options", expanded=True):
         drop_duplicates = st.checkbox("Drop duplicate rows")
@@ -795,7 +795,7 @@ def cleaning_page():
         if st.button("🔍 Preview Cleaning", type="secondary", key="preview_cleaning"):
             cleaned = apply_cleaning(original_df, drop_duplicates, missing_option, outlier_option, encode_option="None", scale_option="None", cols_to_drop=cols_to_drop, target_col=target_col)
             st.markdown("### Cleaned Data Preview")
-            st.dataframe(cleaned.head())
+            st.dataframe(cleaned.head(), width='stretch')
             st.markdown(f"Final shape: {cleaned.shape}")
             st.session_state.cleaned_data = cleaned
     if st.session_state.cleaned_data is not None:
@@ -834,7 +834,7 @@ def eda_page():
     if len(missing_df) > 0:
         fig = px.bar(missing_df, x='Column', y='Missing_Percentage', title="Missing Values by Column (%)", color='Missing_Percentage')
         st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(missing_df, use_container_width=True)
+        st.dataframe(missing_df, width='stretch')
     else:
         st.success("✅ No missing values found!")
     numerical_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -850,7 +850,7 @@ def eda_page():
                 fig = px.box(df, y=selected_num_col, title=f"Box Plot of {selected_num_col}")
                 st.plotly_chart(fig, use_container_width=True)
             col_stats = df[selected_num_col].describe()
-            st.dataframe(col_stats, use_container_width=True)
+            st.dataframe(col_stats, width='stretch')
     categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
     if categorical_cols:
         st.markdown("### 📊 Categorical Columns Analysis")
@@ -923,7 +923,7 @@ def clustering_training_page():
                     "davies_bouldin": metrics["davies_bouldin"],
                     "cluster_sizes": metrics["cluster_sizes"]
                 }
-                st.session_state.clustering_scaler = scaler   # store scaler
+                st.session_state.clustering_scaler = scaler
                 st.success(f"🎉 AutoML completed! Best algorithm: {algo_name} (Silhouette = {score:.4f})")
                 with st.expander("📊 Clustering Results", expanded=True):
                     st.markdown("#### Best Model")
@@ -1021,16 +1021,13 @@ def evaluation_page():
         if numeric_df.shape[1] < 2:
             st.info("Not enough numeric columns for clustering metrics.")
         else:
-            # Use the same scaler that was used during training
             scaler = st.session_state.get("clustering_scaler")
             if scaler is not None:
                 X_scaled = scaler.transform(numeric_df)
             else:
-                # Fallback (should not happen if training was done)
                 st.warning("Scaler not found, recomputing metrics on raw data (may be inaccurate).")
                 X_scaled = numeric_df.values
             
-            # Compute metrics on scaled data
             sil = silhouette_score(X_scaled, labels)
             ch = calinski_harabasz_score(X_scaled, labels)
             db = davies_bouldin_score(X_scaled, labels)
@@ -1040,7 +1037,6 @@ def evaluation_page():
             col2.metric("Calinski-Harabasz", f"{ch:.2f}")
             col3.metric("Davies-Bouldin", f"{db:.4f}")
             
-            # Also show the stored metrics from training (for reference)
             if st.session_state.cluster_metrics:
                 with st.expander("📋 Training-time Metrics (AutoML selection)"):
                     st.write(f"**Algorithm chosen:** {st.session_state.cluster_metrics['algorithm']}")
@@ -1064,7 +1060,7 @@ def evaluation_page():
         st.markdown("### Cluster Assignments (first 100 rows)")
         df_with_cluster = df.copy()
         df_with_cluster['Cluster'] = labels
-        st.dataframe(df_with_cluster[['Cluster'] + [c for c in df_with_cluster.columns if c != 'Cluster']].head(100), use_container_width=True)
+        st.dataframe(df_with_cluster[['Cluster'] + [c for c in df_with_cluster.columns if c != 'Cluster']].head(100), width='stretch')
         return
     
     # Classification / Regression evaluation
@@ -1087,7 +1083,7 @@ def evaluation_page():
         fig = px.imshow(cm, text_auto=True, title="Confusion Matrix")
         st.plotly_chart(fig, use_container_width=True)
         report = classification_report(y_true, preds, output_dict=True, zero_division=0)
-        st.dataframe(pd.DataFrame(report).transpose())
+        st.dataframe(pd.DataFrame(report).transpose(), width='stretch')
     else:
         r2 = r2_score(y_true, preds)
         mae = mean_absolute_error(y_true, preds)
@@ -1154,15 +1150,18 @@ Training completed: {st.session_state.training_complete}
         st.code(report, language='markdown')
         pdf_bytes = text_to_simple_pdf_bytes(report, title="ML Model Report")
         st.download_button("📥 Download Report (PDF)", pdf_bytes, "ml_model_report.pdf")
+    
     st.markdown("### 📋 Session Information")
+    # FIX: Convert all values to strings to avoid Arrow conversion errors
     session_info = {
-        "Data Loaded": st.session_state.data is not None,
-        "Problem Type": st.session_state.problem_type,
-        "Target Column": st.session_state.target_column if st.session_state.target_column else "N/A",
-        "Model Trained": st.session_state.training_complete,
-        "Predictions/Clusters Available": (st.session_state.predictions is not None) or (st.session_state.cluster_labels is not None)
+        "Data Loaded": str(st.session_state.data is not None),
+        "Problem Type": str(st.session_state.problem_type) if st.session_state.problem_type else "N/A",
+        "Target Column": str(st.session_state.target_column) if st.session_state.target_column else "N/A",
+        "Model Trained": str(st.session_state.training_complete),
+        "Predictions/Clusters Available": str((st.session_state.predictions is not None) or (st.session_state.cluster_labels is not None))
     }
-    st.dataframe(pd.DataFrame.from_dict(session_info, orient='index', columns=['Status']), use_container_width=True)
+    st.dataframe(pd.DataFrame.from_dict(session_info, orient='index', columns=['Status']), width='stretch')
+    
     if st.button("🔄 Start Over", type="secondary"):
         for key in ["data", "target_column", "problem_type", "model", "predictions", "test_labels", "training_complete", "cleaned_data", "feature_names", "training_done", "cluster_labels", "cluster_metrics", "clustering_model", "clustering_scaler"]:
             if key in st.session_state:
