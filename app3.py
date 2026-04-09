@@ -1016,7 +1016,7 @@ def training_page():
     # ----- User selects training speed mode -----
     train_mode = st.radio(
         "⚡ Training Speed Mode",
-        options=["Fast (a few seconds)", "Standard (1-2 minutes)", "Full (slower, best model)"],
+        options=["Fast (few seconds)", "Standard (1-2 min)", "Full (slower, best)"],
         index=1,
         help="Fast: RandomForest only, 3-fold CV. Standard: 5 common models, 5-fold. Full: all models, 10-fold."
     )
@@ -1036,11 +1036,11 @@ def training_page():
             try:
                 if PYCARET_AVAILABLE:
                     # Set parameters based on mode
-                    if train_mode == "Fast (a few seconds)":
+                    if train_mode == "Fast (few seconds)":
                         fold = 3
                         include_models = ['rf']   # RandomForest only
                         sort_metric = 'Accuracy' if problem_type == 'Classification' else 'R2'
-                    elif train_mode == "Standard (1-2 minutes)":
+                    elif train_mode == "Standard (1-2 min)":
                         fold = 5
                         if problem_type == "Classification":
                             include_models = ['lr', 'rf', 'xgboost', 'lightgbm', 'dt']
@@ -1063,12 +1063,15 @@ def training_page():
                         "fold": fold,
                         "n_jobs": -1,
                         "html": False,
-                        "preprocess": False,   # Skip PyCaret's automatic preprocessing
+                        "preprocess": False,
                     }
                     
                     if problem_type == "Classification":
                         _pycaret_setup_safe(clf_setup, **setup_args)
                         best_model = clf_compare(verbose=False, sort=sort_metric, include=include_models, n_select=1, fold=fold)
+                        # Fix: if compare_models returns a list, extract first element
+                        if isinstance(best_model, list):
+                            best_model = best_model[0]
                         pred_df = clf_predict(best_model)
                         preds = pred_df['prediction_label'].values
                         y_true = pred_df[target_col].values
@@ -1076,6 +1079,8 @@ def training_page():
                     else:  # Regression
                         _pycaret_setup_safe(reg_setup, **setup_args)
                         best_model = reg_compare(verbose=False, sort=sort_metric, include=include_models, n_select=1, fold=fold)
+                        if isinstance(best_model, list):
+                            best_model = best_model[0]
                         pred_df = reg_predict(best_model)
                         preds = pred_df['prediction_label'].values
                         y_true = pred_df[target_col].values
